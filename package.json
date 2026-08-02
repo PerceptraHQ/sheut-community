@@ -20,7 +20,7 @@
   "scripts": {
     "dev": "vite",
     "build": "corepack pnpm typecheck && corepack pnpm build:frontend",
-    "build:frontend": "GOMAXPROCS=2 UV_THREADPOOL_SIZE=2 vite build && corepack pnpm check:bundle",
+    "build:frontend": "node scripts/build-frontend.mjs",
     "check": "corepack pnpm check:frontend && corepack pnpm check:rust && corepack pnpm build:frontend",
     "check:biome": "biome check .",
     "check:bundle": "node scripts/check-bundle-size.mjs",
