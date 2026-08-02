@@ -17,10 +17,7 @@ on:
     - cron: "43 4 * * 4"
   workflow_dispatch:
 
-permissions:
-  contents: read
-  checks: write
-  issues: write
+permissions: read-all
 
 concurrency:
   group: rust-audit-${{ github.ref }}
@@ -31,6 +28,10 @@ jobs:
     name: Audit Cargo.lock against RustSec
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
+      checks: write
+      issues: write
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
