@@ -1,0 +1,36 @@
+{
+  "sources": [
+    {
+      "catalog": "attack_enterprise",
+      "version": "19.1",
+      "file": "sheut-enterprise-attack-19.1.json",
+      "output": "attack-enterprise-19.1.json",
+      "sourceUrl": "https://github.com/mitre-attack/attack-stix-data/releases/download/v19.1/enterprise-attack.json",
+      "sha256": "bdf1ce86a4e604214c5076d37ae4dcb322678afc528df8492e6fdc1b554f5da3"
+    },
+    {
+      "catalog": "attack_mobile",
+      "version": "19.1",
+      "file": "sheut-mobile-attack-19.1.json",
+      "output": "attack-mobile-19.1.json",
+      "sourceUrl": "https://github.com/mitre-attack/attack-stix-data/releases/download/v19.1/mobile-attack.json",
+      "sha256": "423cbceb604770c8997845151fe7cc4813de01033b8cc50c84dd3bd0d96d8322"
+    },
+    {
+      "catalog": "attack_ics",
+      "version": "19.1",
+      "file": "sheut-ics-attack-19.1.json",
+      "output": "attack-ics-19.1.json",
+      "sourceUrl": "https://github.com/mitre-attack/attack-stix-data/releases/download/v19.1/ics-attack.json",
+      "sha256": "a91f659d6d03095e84089630b098edb2ed9d5cd5b1ea41369b27846cd32f2a43"
+    },
+    {
+      "catalog": "atlas",
+      "version": "2026.06",
+      "file": "sheut-atlas-2026.06.json",
+      "output": "atlas-2026.06.json",
+      "sourceUrl": "https://github.com/mitre-atlas/atlas-data/releases/download/v2026.06/stix-atlas.json",
+      "sha256": "6705747abacbc308616c86f0972e98d7dc2126808162018c5039509807b89517"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+diff --git a/src/define.js b/src/define.js
+index 2bba2d3a4fdf3cdee152aacc711366f91c1d5747..656025030cc287ca36fd68db4a82b2caa64674e1 100644
+--- a/src/define.js
++++ b/src/define.js
+@@ -1,6 +1,10 @@
+ export default function(constructor, factory, prototype) {
+   constructor.prototype = factory.prototype = prototype;
+-  prototype.constructor = constructor;
++  Object.defineProperty(prototype, "constructor", {
++    value: constructor,
++    writable: true,
++    configurable: true
++  });
+ }
+ 
+ export function extend(parent, definition) {

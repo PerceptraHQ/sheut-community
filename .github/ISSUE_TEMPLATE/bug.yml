@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a reproducible Sheut Community defect using synthetic data.
+title: "bug: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not include real intelligence, credentials, customer data, personal data, keys, or malware.
+        Report vulnerabilities through the private Security advisory flow instead.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: 0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Use only synthetic content and include the smallest reproducible sequence.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Remove paths, identities, credentials, project content, and intelligence values.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I searched existing issues for this defect.
+          required: true
+        - label: This report contains no sensitive or operational intelligence.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

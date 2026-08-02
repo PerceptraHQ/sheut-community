@@ -1,0 +1,41 @@
+[workspace]
+members = ["crates/sheut-core", "crates/sheut-mitre", "crates/sheut-project", "crates/sheut-publish", "crates/sheut-stix", "crates/sheut-store", "src-tauri"]
+resolver = "2"
+
+[profile.release]
+debug = 0
+strip = "symbols"
+
+[workspace.package]
+version = "0.1.0-alpha"
+authors = ["PerceptraHQ and Sheut contributors"]
+edition = "2024"
+rust-version = "1.97.1"
+license = "MPL-2.0"
+repository = "https://github.com/PerceptraHQ/sheut-community"
+
+[workspace.dependencies]
+argon2 = "=0.5.3"
+chacha20poly1305 = "=0.10.1"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+uuid = { version = "=1.24.0", features = ["serde", "v4"] }
+rusqlite = { version = "=0.40.1", features = ["backup", "bundled-sqlcipher-vendored-openssl"] }
+zeroize = "=1.9.0"
+getrandom = "=0.4.3"
+keyring = { version = "=4.1.5", default-features = false, features = ["v1"] }
+typst-as-lib = "=0.16.0"
+typst = "=0.15.1"
+typst-pdf = "=0.15.1"
+docx-rs = "=0.4.22"
+rfd = "=0.17.2"
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
+base64 = "=0.22.1"
+rstix = { version = "=0.20.0", default-features = false, features = ["validate"] }
+
+[patch.crates-io]
+# Typst 0.15.1 pins citationberg 0.7.0, whose published manifest still
+# permits the vulnerable quick-xml 0.38 line. Keep citationberg's source
+# unchanged while moving its XML parser to the patched 0.41 API line.
+citationberg = { path = "vendor/citationberg" }

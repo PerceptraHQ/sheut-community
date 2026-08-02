@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/PerceptraHQ/sheut/security/advisories/new
+    about: Never disclose suspected vulnerabilities in a public issue.
+  - name: Support policy
+    url: https://github.com/PerceptraHQ/sheut/blob/main/SUPPORT.md
+    about: Read the support and data-safety boundaries before filing.

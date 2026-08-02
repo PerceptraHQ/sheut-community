@@ -1,0 +1,21 @@
+[package]
+name = "sheut-publish"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Validated offline publication rendering for Sheut Community"
+
+[dependencies]
+base64.workspace = true
+docx-rs.workspace = true
+serde_json.workspace = true
+sheut-core = { path = "../sheut-core" }
+typst.workspace = true
+typst-as-lib.workspace = true
+typst-pdf.workspace = true
+
+[dev-dependencies]
+zip = "=8.6.0"

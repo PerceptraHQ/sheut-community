@@ -1,0 +1,10 @@
+allowBuilds:
+  esbuild: true
+  sharp: true
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeExclude:
+  - "@tabler/icons@3.46.0"
+  - "@tabler/icons-react@3.46.0"
+patchedDependencies:
+  d3-color@3.1.0: patches/d3-color@3.1.0.patch

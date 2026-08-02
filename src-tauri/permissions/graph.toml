@@ -1,0 +1,79 @@
+[[permission]]
+identifier = "allow-list-graph-workspaces"
+description = "Allows listing graph workspaces in the active local project."
+commands.allow = ["list_graph_workspaces"]
+
+[[permission]]
+identifier = "allow-list-graph-source-items"
+description = "Allows listing graph-eligible items in the active local project."
+commands.allow = ["list_graph_source_items"]
+
+[[permission]]
+identifier = "allow-create-graph-workspace"
+description = "Allows creating a graph workspace in the active local project."
+commands.allow = ["create_graph_workspace"]
+
+[[permission]]
+identifier = "allow-load-graph-workspace"
+description = "Allows loading one graph workspace from the active local project."
+commands.allow = ["load_graph_workspace"]
+
+[[permission]]
+identifier = "allow-rename-graph-workspace"
+description = "Allows revision-checked graph workspace renaming."
+commands.allow = ["rename_graph_workspace"]
+
+[[permission]]
+identifier = "allow-delete-graph-workspace"
+description = "Allows recoverable graph workspace deletion."
+commands.allow = ["delete_graph_workspace"]
+
+[[permission]]
+identifier = "allow-restore-graph-workspace"
+description = "Allows restoring a deleted graph workspace."
+commands.allow = ["restore_graph_workspace"]
+
+[[permission]]
+identifier = "allow-add-graph-workspace-items"
+description = "Allows bounded item additions to a graph workspace."
+commands.allow = ["add_graph_workspace_items"]
+
+[[permission]]
+identifier = "allow-remove-graph-workspace-items"
+description = "Allows bounded membership removal from a graph workspace."
+commands.allow = ["remove_graph_workspace_items"]
+
+[[permission]]
+identifier = "allow-save-graph-workspace-state"
+description = "Allows revision-checked graph position, pin, mode, and viewport saves."
+commands.allow = ["save_graph_workspace_state"]
+
+[[permission]]
+identifier = "allow-create-graph-visual-link"
+description = "Allows creating workspace-only visual links."
+commands.allow = ["create_graph_visual_link"]
+
+[[permission]]
+identifier = "allow-update-graph-visual-link"
+description = "Allows updating workspace-only visual links."
+commands.allow = ["update_graph_visual_link"]
+
+[[permission]]
+identifier = "allow-delete-graph-visual-link"
+description = "Allows deleting workspace-only visual links."
+commands.allow = ["delete_graph_visual_link"]
+
+[[permission]]
+identifier = "allow-load-graph-item-properties"
+description = "Allows loading properties for a selected graph item."
+commands.allow = ["load_graph_item_properties"]
+
+[[permission]]
+identifier = "allow-preview-graph-relationship-draft"
+description = "Allows previewing a STIX relationship draft from an existing visual link."
+commands.allow = ["preview_graph_relationship_draft"]
+
+[[permission]]
+identifier = "allow-commit-graph-relationship-draft"
+description = "Allows creating a separate local STIX relationship draft without changing its visual link."
+commands.allow = ["commit_graph_relationship_draft"]

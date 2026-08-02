@@ -1,0 +1,18 @@
+[package]
+name = "sheut-store"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Encrypted local project storage for Sheut Community"
+
+[dependencies]
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sheut-core = { path = "../sheut-core" }
+sheut-stix = { path = "../sheut-stix" }
+zeroize.workspace = true

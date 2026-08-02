@@ -1,0 +1,43 @@
+name: Feature proposal
+description: Propose a focused Community capability or product improvement.
+title: "feat: "
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Analyst problem
+      description: Describe the CTI workflow problem without prescribing an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: What should an analyst be able to accomplish?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: boundary
+    attributes:
+      label: Product boundary
+      description: External service integrations and organization operation belong to Enterprise.
+      options:
+        - Community local/offline capability
+        - Enterprise integration or team capability
+        - Unsure
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues and product documentation.
+          required: true
+        - label: This proposal includes no sensitive or operational intelligence.
+          required: true
