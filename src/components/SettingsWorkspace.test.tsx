@@ -103,5 +103,8 @@ describe("SettingsWorkspace", () => {
       screen.getAllByText(/Create in Intelligence as Domain Name or URL/i).length,
     ).toBeGreaterThan(0);
     expect(screen.getByText(/Do not create one STIX object per cell/i)).toBeVisible();
+    expect(screen.getByText(/Start each section in the narrative canvas/i)).toBeVisible();
+    expect(screen.getByText(/readiness recommendations are advisory/i)).toBeVisible();
+    expect(screen.queryByText("Report status")).not.toBeInTheDocument();
   });
 });
