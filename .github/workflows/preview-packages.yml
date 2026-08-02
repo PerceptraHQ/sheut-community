@@ -19,6 +19,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - label: macOS-Intel
+            runner: macos-15
+            bundles: dmg
           - label: Windows
             runner: windows-2025
             bundles: nsis,msi
@@ -63,6 +66,21 @@ jobs:
       - name: Select pinned Rust toolchain
         run: rustup show active-toolchain
 
+      - name: Build standalone macOS application
+        if: runner.os == 'macOS'
+        run: corepack pnpm tauri build --bundles app
+        env:
+          CARGO_BUILD_JOBS: "2"
+          GOMAXPROCS: "2"
+          UV_THREADPOOL_SIZE: "2"
+
+      - name: Archive standalone macOS application
+        if: runner.os == 'macOS'
+        run: >-
+          ditto -c -k --sequesterRsrc --keepParent
+          target/release/bundle/macos/Sheut.app
+          target/release/bundle/macos/Sheut.app.zip
+
       - name: Build unsigned preview package
         run: corepack pnpm tauri build --bundles ${{ matrix.bundles }}
         env:
@@ -79,5 +97,7 @@ jobs:
             target/release/bundle/**/*.AppImage
             target/release/bundle/**/*.msi
             target/release/bundle/**/*.exe
+            target/release/bundle/**/*.dmg
+            target/release/bundle/**/*.app.zip
           if-no-files-found: error
           retention-days: 14

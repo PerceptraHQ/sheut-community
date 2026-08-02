@@ -157,6 +157,7 @@ it("records optional sections as not applicable without making the report incomp
     />,
   );
 
+  await user.click(screen.getByRole("button", { name: /Detections and Signatures/u }));
   await user.click(screen.getByRole("button", { name: "Not applicable" }));
 
   expect(updateGuidedReportSectionDisposition).toHaveBeenCalledWith(
@@ -220,6 +221,9 @@ it("renders template fields and saves them as one revision", async () => {
   expect(screen.getByLabelText("Report title")).toHaveAttribute("autocomplete", "off");
   expect(screen.getByLabelText("Campaign name (required)").tagName).toBe("TEXTAREA");
   expect(screen.getByLabelText("Campaign name (required)")).toHaveAttribute("autocomplete", "off");
+  screen.getByRole("button", { name: "Add content to Campaign metadata" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Publication date" }));
   expect(screen.getByLabelText("Publication date").tagName).toBe("INPUT");
   expect(screen.getByLabelText("Publication date")).toHaveAttribute("type", "date");
   expect(screen.getByLabelText("Publication date")).toHaveAttribute("autocomplete", "off");
@@ -264,6 +268,90 @@ it("makes the complete narrative surface editable instead of leaving a one-line 
     "prose-invert",
     "prose-sheut",
   );
+});
+
+it("keeps unused secondary fields behind one section-level add menu", async () => {
+  const user = userEvent.setup();
+  const focusedTemplate: ReportTemplateDefinition = {
+    ...template,
+    sections: [
+      {
+        key: "assessment",
+        title: "Assessment",
+        optional: false,
+        fields: [
+          {
+            key: "assessment",
+            label: "Assessment",
+            help_text: null,
+            kind: "narrative",
+            required: true,
+            columns: [],
+          },
+          {
+            key: "financial_relationships",
+            label: "Financial relationships",
+            help_text: null,
+            kind: "narrative",
+            required: false,
+            columns: [],
+          },
+          {
+            key: "structured_findings",
+            label: "Structured findings",
+            help_text: null,
+            kind: "repeatable_rows",
+            required: false,
+            columns: ["Finding", "Evidence"],
+          },
+          {
+            key: "supporting_intelligence",
+            label: "Supporting intelligence",
+            help_text: null,
+            kind: "project_references",
+            required: false,
+            columns: [],
+          },
+        ],
+      },
+    ],
+  };
+  const focusedReport: GuidedReport = {
+    ...report,
+    template_id: focusedTemplate.id,
+    included_sections: ["assessment"],
+    fields: {
+      assessment: { type: "narrative", value: { type: "doc", content: [] } },
+      financial_relationships: { type: "narrative", value: { type: "doc", content: [] } },
+      structured_findings: { type: "rows", value: [] },
+      supporting_intelligence: { type: "project_references", value: [] },
+    },
+  };
+
+  render(
+    <GuidedReportEditor
+      projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+      report={focusedReport}
+      template={focusedTemplate}
+      onBusyChange={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByLabelText("Assessment (required)")).toBeVisible();
+  expect(screen.queryByLabelText("Financial relationships")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add row" })).not.toBeInTheDocument();
+  expect(screen.queryByText("No project data referenced yet.")).not.toBeInTheDocument();
+
+  screen.getByRole("button", { name: "Add content to Assessment" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Financial relationships" }));
+  expect(screen.getByLabelText("Financial relationships")).toBeVisible();
+
+  screen.getByRole("button", { name: "Add content to Assessment" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Structured findings table" }));
+  expect(screen.getByRole("button", { name: "Add row" })).toBeVisible();
 });
 
 it("shows exact validation messages for every required field type before publication", async () => {
@@ -465,7 +553,13 @@ it("keeps empty sections in the editor but removes them from publication choices
     />,
   );
 
+  const navigation = screen.getByRole("navigation", { name: "Report sections" });
+  const emptyNotes = within(navigation).getByRole("button", { name: /Empty notes/u });
+  const blankInventory = within(navigation).getByRole("button", { name: /Blank inventory/u });
+  expect(screen.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await user.click(emptyNotes);
   expect(screen.getByRole("heading", { name: "Empty notes" })).toBeVisible();
+  await user.click(blankInventory);
   expect(screen.getByRole("heading", { name: "Blank inventory" })).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "Publish report" }));
@@ -476,7 +570,7 @@ it("keeps empty sections in the editor but removes them from publication choices
   expect(within(choices).queryByText("Blank inventory")).not.toBeInTheDocument();
 });
 
-it("keeps every report on one page with bounded section navigation and visible status", async () => {
+it("shows one selected section at a time with status visible in bounded navigation", async () => {
   const user = userEvent.setup();
   const metadataSection = template.sections[0];
   if (!metadataSection) throw new Error("Campaign metadata test section is missing");
@@ -511,7 +605,7 @@ it("keeps every report on one page with bounded section navigation and visible s
     },
   };
 
-  const view = render(
+  render(
     <div className="canvas">
       <GuidedReportEditor
         projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
@@ -524,53 +618,22 @@ it("keeps every report on one page with bounded section navigation and visible s
   );
 
   const navigation = screen.getByRole("navigation", { name: "Report sections" });
-  const metadataLink = within(navigation).getByRole("link", { name: /Campaign metadata/u });
-  expect(metadataLink).toHaveAttribute("href", "#report-section-campaign_metadata");
+  const metadataButton = within(navigation).getByRole("button", { name: /Campaign metadata/u });
+  expect(metadataButton).toHaveAttribute("aria-current", "page");
   expect(within(navigation).getByText("1 required")).toBeVisible();
-  expect(within(navigation).getByRole("link", { name: /Evidence/u })).toHaveAttribute(
-    "href",
-    "#report-section-evidence",
-  );
+  const evidenceButton = within(navigation).getByRole("button", { name: /Evidence/u });
+  expect(evidenceButton).not.toHaveAttribute("aria-current");
   expect(within(navigation).getByText("Optional")).toBeVisible();
   expect(screen.getByText("Required before publishing")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Campaign metadata" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Evidence" })).not.toBeInTheDocument();
 
-  const metadataHeading = screen.getByRole("heading", { name: "Campaign metadata" });
-  const metadataTargetSection = metadataHeading.closest("section");
-  if (!metadataTargetSection) throw new Error("Campaign metadata section is missing");
-  const canvas = view.container.querySelector<HTMLElement>(".canvas");
-  if (!canvas) throw new Error("Report canvas is missing");
-  const scrollTo = vi.fn();
-  Object.defineProperty(canvas, "scrollTop", { configurable: true, value: 120 });
-  Object.defineProperty(canvas, "scrollTo", { configurable: true, value: scrollTo });
-  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
-    top: 20,
-    left: 0,
-    right: 800,
-    bottom: 620,
-    width: 800,
-    height: 600,
-    x: 0,
-    y: 20,
-    toJSON: () => ({}),
-  });
-  vi.spyOn(metadataTargetSection, "getBoundingClientRect").mockReturnValue({
-    top: 260,
-    left: 0,
-    right: 800,
-    bottom: 460,
-    width: 800,
-    height: 200,
-    x: 0,
-    y: 260,
-    toJSON: () => ({}),
-  });
-  const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
-  window.history.replaceState(null, "", "/");
-  await user.click(metadataLink);
+  await user.click(evidenceButton);
 
-  expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 360 });
-  expect(scrollIntoView).not.toHaveBeenCalled();
-  expect(window.location.hash).toBe("");
+  expect(evidenceButton).toHaveAttribute("aria-current", "page");
+  expect(metadataButton).not.toHaveAttribute("aria-current");
+  expect(screen.getByRole("heading", { name: "Evidence" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Campaign metadata" })).not.toBeInTheDocument();
 });
 
 it("offers contextual controls and project data only for compatible structured columns", async () => {
@@ -624,6 +687,9 @@ it("offers contextual controls and project data only for compatible structured c
   expect(
     screen.queryByRole("button", { name: /Insert project data as new Sites row/u }),
   ).toBeNull();
+  screen.getByRole("button", { name: "Add content to Site inventory" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Sites table" }));
   await user.click(screen.getByRole("button", { name: "Add row" }));
 
   expect(
@@ -683,6 +749,9 @@ it("makes incident timeline rows fill their container with readable controls", a
     />,
   );
 
+  screen.getByRole("button", { name: "Add content to Incident metadata" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Incident timeline table" }));
   await user.click(screen.getByRole("button", { name: "Add row" }));
 
   expect(screen.getByLabelText("Incident timeline row 1 Time")).toHaveClass(
@@ -743,6 +812,11 @@ it("renders the shared data-sources table with source-aware controls", async () 
     />,
   );
 
+  screen.getByRole("button", { name: "Add content to Data sources" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Data sources and citations table" }),
+  );
   await user.click(screen.getByRole("button", { name: "Add row" }));
 
   expect(screen.getByLabelText("Data sources and citations row 1 Source").tagName).toBe("TEXTAREA");

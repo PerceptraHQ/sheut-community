@@ -1,10 +1,9 @@
 import { Button } from "@base-ui/react/button";
-import { Collapsible } from "@base-ui/react/collapsible";
 import { Dialog } from "@base-ui/react/dialog";
 import { Field } from "@base-ui/react/field";
+import { Menu } from "@base-ui/react/menu";
 import {
   IconBold,
-  IconChevronDown,
   IconDeviceFloppy,
   IconFileExport,
   IconItalic,
@@ -140,13 +139,18 @@ export function GuidedReportEditor({
   const titleRef = useRef(title);
   const revisionRef = useRef(report.revision);
   const savingRef = useRef(false);
-  const editorRootRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<number | null>(null);
   const saveRef = useRef<() => Promise<void>>(async () => {});
   const includedTemplateSections = useMemo(
     () => template.sections.filter((section) => report.included_sections.includes(section.key)),
     [report.included_sections, template.sections],
   );
+  const [activeSectionKey, setActiveSectionKey] = useState(
+    report.included_sections[0] ?? template.sections[0]?.key ?? "",
+  );
+  const activeSection =
+    includedTemplateSections.find((section) => section.key === activeSectionKey) ??
+    includedTemplateSections[0];
   const publicationSections = useMemo(
     () =>
       includedTemplateSections
@@ -254,6 +258,14 @@ export function GuidedReportEditor({
       fieldsRef.current,
     );
     if (issues.length > 0) {
+      const firstInvalidSection = includedTemplateSections.find(
+        (section) =>
+          (sectionDispositions[section.key] ?? "active") === "active" &&
+          section.fields.some((field) =>
+            guidedFieldValidationMessage(field, fieldsRef.current[field.key]),
+          ),
+      );
+      if (firstInvalidSection) setActiveSectionKey(firstInvalidSection.key);
       const description =
         issues.length === 1
           ? issues[0]
@@ -262,7 +274,7 @@ export function GuidedReportEditor({
       return;
     }
     setPublicationOpen(true);
-  }, [notices, report.included_sections, sectionDispositions, template]);
+  }, [includedTemplateSections, notices, report.included_sections, sectionDispositions, template]);
 
   const updateSectionDisposition = async (
     sectionKey: string,
@@ -349,10 +361,7 @@ export function GuidedReportEditor({
   const titleValidation = reportTitleValidationMessage(title);
 
   return (
-    <div
-      className="mx-auto grid w-full max-w-7xl gap-4 px-5 py-5 lg:grid-cols-[14rem_minmax(0,1fr)]"
-      ref={editorRootRef}
-    >
+    <div className="mx-auto grid w-full max-w-7xl gap-4 px-5 py-5 lg:grid-cols-[14rem_minmax(0,1fr)]">
       <nav
         aria-label="Report sections"
         className="sticky top-0 z-20 -mx-1 flex gap-1 overflow-x-auto rounded-sm border border-panel-border bg-panel-raised p-2 lg:top-5 lg:mx-0 lg:grid lg:self-start lg:overflow-visible"
@@ -367,28 +376,16 @@ export function GuidedReportEditor({
             sectionDispositions[section.key] ?? "active",
           );
           return (
-            <a
-              className="flex min-w-max items-center justify-between gap-3 rounded-sm px-2 py-1.5 text-copy-secondary text-xs no-underline hover:bg-panel-hover hover:text-copy-primary focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent lg:min-w-0"
-              href={`#report-section-${section.key}`}
+            <button
+              aria-current={activeSection?.key === section.key ? "page" : undefined}
+              className={`flex min-w-max items-center justify-between gap-3 rounded-sm border-0 px-2 py-1.5 text-left text-copy-secondary text-xs hover:bg-panel-hover hover:text-copy-primary focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent lg:min-w-0 ${
+                activeSection?.key === section.key
+                  ? "bg-panel-hover text-copy-primary"
+                  : "bg-transparent"
+              }`}
               key={section.key}
-              onClick={(event) => {
-                event.preventDefault();
-                const canvas = editorRootRef.current?.closest<HTMLElement>(".canvas");
-                const target = document
-                  .getElementById(`report-section-${section.key}`)
-                  ?.closest<HTMLElement>("section");
-                if (!canvas || !target) return;
-                const behavior = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-                  ? "auto"
-                  : "smooth";
-                canvas.scrollTo({
-                  behavior,
-                  top:
-                    canvas.scrollTop +
-                    target.getBoundingClientRect().top -
-                    canvas.getBoundingClientRect().top,
-                });
-              }}
+              onClick={() => setActiveSectionKey(section.key)}
+              type="button"
             >
               <span className="truncate">{section.title}</span>
               <span
@@ -400,7 +397,7 @@ export function GuidedReportEditor({
               >
                 {status.label}
               </span>
-            </a>
+            </button>
           );
         })}
       </nav>
@@ -541,77 +538,79 @@ export function GuidedReportEditor({
           />
         ) : null}
 
-        {includedTemplateSections.map((section) => {
-          const disposition = sectionDispositions[section.key] ?? "active";
-          const status = guidedSectionStatus(section, fields, disposition);
-          return (
-            <section
-              className="grid scroll-mt-20 gap-4 rounded-sm border border-panel-border bg-panel-base p-4"
-              key={section.key}
-              aria-labelledby={`report-section-${section.key}`}
-            >
-              <header className="flex items-center gap-2 border-panel-border border-b pb-3">
-                <h2 className="m-0 text-sm font-semibold" id={`report-section-${section.key}`}>
-                  {section.title}
-                </h2>
-                {section.optional ? (
-                  <span className="rounded-sm bg-panel-deep px-1.5 py-0.5 text-[10px] text-copy-faint uppercase tracking-wide">
-                    Optional
-                  </span>
-                ) : null}
-                {section.optional ? (
-                  <Button
-                    className="control-button ml-auto px-2 py-1 text-[10px]"
-                    type="button"
-                    disabled={saveState !== "saved"}
-                    onClick={() =>
-                      void updateSectionDisposition(
-                        section.key,
-                        disposition === "not_applicable" ? "active" : "not_applicable",
-                      )
+        {includedTemplateSections
+          .filter((section) => section.key === activeSection?.key)
+          .map((section) => {
+            const disposition = sectionDispositions[section.key] ?? "active";
+            const status = guidedSectionStatus(section, fields, disposition);
+            return (
+              <section
+                className="grid scroll-mt-20 gap-4 rounded-sm border border-panel-border bg-panel-base p-4"
+                key={section.key}
+                aria-labelledby={`report-section-${section.key}`}
+              >
+                <header className="flex items-center gap-2 border-panel-border border-b pb-3">
+                  <h2 className="m-0 text-sm font-semibold" id={`report-section-${section.key}`}>
+                    {section.title}
+                  </h2>
+                  {section.optional ? (
+                    <span className="rounded-sm bg-panel-deep px-1.5 py-0.5 text-[10px] text-copy-faint uppercase tracking-wide">
+                      Optional
+                    </span>
+                  ) : null}
+                  {section.optional ? (
+                    <Button
+                      className="control-button ml-auto px-2 py-1 text-[10px]"
+                      type="button"
+                      disabled={saveState !== "saved"}
+                      onClick={() =>
+                        void updateSectionDisposition(
+                          section.key,
+                          disposition === "not_applicable" ? "active" : "not_applicable",
+                        )
+                      }
+                    >
+                      {disposition === "not_applicable" ? "Use section" : "Not applicable"}
+                    </Button>
+                  ) : null}
+                  <span
+                    className={
+                      status.kind === "needs-input"
+                        ? `${section.optional ? "" : "ml-auto"} text-[11px] text-accent-hover`
+                        : `${section.optional ? "" : "ml-auto"} text-[11px] text-copy-faint`
                     }
                   >
-                    {disposition === "not_applicable" ? "Use section" : "Not applicable"}
-                  </Button>
+                    {status.label}
+                  </span>
+                </header>
+                {section.guidance ? (
+                  <p className="m-0 rounded-sm border border-panel-border bg-panel-deep px-3 py-2 text-copy-muted text-xs leading-5">
+                    {section.guidance}
+                  </p>
                 ) : null}
-                <span
-                  className={
-                    status.kind === "needs-input"
-                      ? `${section.optional ? "" : "ml-auto"} text-[11px] text-accent-hover`
-                      : `${section.optional ? "" : "ml-auto"} text-[11px] text-copy-faint`
-                  }
-                >
-                  {status.label}
-                </span>
-              </header>
-              {section.guidance ? (
-                <p className="m-0 rounded-sm border border-panel-border bg-panel-deep px-3 py-2 text-copy-muted text-xs leading-5">
-                  {section.guidance}
-                </p>
-              ) : null}
-              {section.key === "report_administration" ? (
-                <p className="m-0 rounded-sm border border-panel-border bg-panel-deep px-3 py-2 text-copy-muted text-xs leading-5">
-                  The report title is set above. Choose the release version and handling marking in
-                  Publish; both are stored in the publication snapshot and reproduced in HTML, DOCX,
-                  and PDF.
-                </p>
-              ) : null}
-              {disposition === "not_applicable" ? (
-                <p className="m-0 text-copy-muted text-sm">
-                  This optional section is recorded as not applicable and will not be published.
-                </p>
-              ) : (
-                <GuidedSectionFields
-                  fields={fields}
-                  projectId={projectId}
-                  section={section}
-                  validationAttempted={validationAttempted}
-                  onChange={updateField}
-                />
-              )}
-            </section>
-          );
-        })}
+                {section.key === "report_administration" ? (
+                  <p className="m-0 rounded-sm border border-panel-border bg-panel-deep px-3 py-2 text-copy-muted text-xs leading-5">
+                    The report title is set above. Choose the release version and handling marking
+                    in Publish; both are stored in the publication snapshot and reproduced in HTML,
+                    DOCX, and PDF.
+                  </p>
+                ) : null}
+                {disposition === "not_applicable" ? (
+                  <p className="m-0 text-copy-muted text-sm">
+                    This optional section is recorded as not applicable and will not be published.
+                  </p>
+                ) : (
+                  <GuidedSectionFields
+                    fields={fields}
+                    projectId={projectId}
+                    section={section}
+                    validationAttempted={validationAttempted}
+                    onChange={updateField}
+                  />
+                )}
+              </section>
+            );
+          })}
       </article>
     </div>
   );
@@ -630,8 +629,18 @@ function GuidedSectionFields({
   section: ReportTemplateSection;
   validationAttempted: boolean;
 }) {
-  const required = section.fields.filter((field) => field.required);
-  const optional = section.fields.filter((field) => !field.required);
+  const [revealedFieldKeys, setRevealedFieldKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const primaryNarrative = section.fields.find((field) => field.kind === "narrative");
+  const visibleFields = section.fields.filter(
+    (field) =>
+      field.required ||
+      field.key === primaryNarrative?.key ||
+      revealedFieldKeys.has(field.key) ||
+      guidedFieldHasPublicationContent(fields[field.key]),
+  );
+  const hiddenFields = section.fields.filter(
+    (field) => !visibleFields.some((visibleField) => visibleField.key === field.key),
+  );
   const renderField = (field: ReportTemplateField) => (
     <GuidedField
       field={field}
@@ -642,32 +651,56 @@ function GuidedSectionFields({
       onChange={(value) => onChange(field.key, value)}
     />
   );
-  if (optional.length <= 3) return <>{section.fields.map(renderField)}</>;
-  const hasOptionalContent = optional.some((field) =>
-    guidedFieldHasPublicationContent(fields[field.key]),
-  );
   return (
-    <>
-      {required.map(renderField)}
-      <Collapsible.Root
-        className="rounded-sm border border-panel-border bg-panel-deep"
-        defaultOpen={hasOptionalContent}
-      >
-        <Collapsible.Trigger className="group flex w-full items-center justify-between gap-3 border-0 bg-transparent px-3 py-2 text-left font-medium text-copy-secondary text-xs hover:bg-panel-hover">
-          Additional structured details
-          <IconChevronDown
-            aria-hidden="true"
-            className="transition-transform group-data-panel-open:rotate-180"
-            size={14}
-            stroke={1.7}
-          />
-        </Collapsible.Trigger>
-        <Collapsible.Panel className="grid h-[var(--collapsible-panel-height)] gap-4 overflow-hidden border-panel-border border-t px-3 py-3 transition-[height] duration-150 data-ending-style:h-0 data-starting-style:h-0">
-          {optional.map(renderField)}
-        </Collapsible.Panel>
-      </Collapsible.Root>
-    </>
+    <div className="grid gap-4">
+      {visibleFields.map(renderField)}
+      {hiddenFields.length > 0 ? (
+        <div className="flex items-center justify-between gap-3 border-panel-border border-t pt-3">
+          <p className="m-0 text-copy-faint text-[11px] leading-4">
+            Add only the structured content this section needs.
+          </p>
+          <Menu.Root>
+            <Menu.Trigger
+              aria-label={`Add content to ${section.title}`}
+              className="control-button shrink-0"
+            >
+              <IconPlus size={14} stroke={1.7} aria-hidden="true" />
+              Add to section
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner align="end" className="z-50 outline-none" sideOffset={5}>
+                <Menu.Popup className="min-w-64 origin-[var(--transform-origin)] rounded-sm border border-panel-border bg-panel-raised p-1 shadow-xl ring-1 ring-white/5 outline-none transition-[scale,opacity] duration-100 data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
+                  <Menu.Group>
+                    <Menu.GroupLabel className="px-2 py-1 text-[11px] text-copy-faint uppercase tracking-wider">
+                      Available content
+                    </Menu.GroupLabel>
+                    {hiddenFields.map((field) => (
+                      <Menu.Item
+                        className="grid cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-sm px-2 py-1.5 text-copy-secondary text-xs outline-none data-highlighted:bg-panel-hover data-highlighted:text-copy-primary"
+                        key={field.key}
+                        onClick={() =>
+                          setRevealedFieldKeys((current) => new Set(current).add(field.key))
+                        }
+                      >
+                        <IconPlus size={13} stroke={1.7} aria-hidden="true" />
+                        <span>{sectionFieldMenuLabel(field)}</span>
+                      </Menu.Item>
+                    ))}
+                  </Menu.Group>
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
+        </div>
+      ) : null}
+    </div>
   );
+}
+
+function sectionFieldMenuLabel(field: ReportTemplateField): string {
+  if (field.kind === "repeatable_rows") return `${field.label} table`;
+  if (field.kind === "project_references") return `${field.label} references`;
+  return field.label;
 }
 
 function GuidedField({
