@@ -108,6 +108,24 @@ fn rich_text_document() -> DocumentEnvelope {
     .unwrap()
 }
 
+fn document_with_an_intentional_paragraph_gap() -> DocumentEnvelope {
+    DocumentEnvelope::new(
+        id("d88e4ac8-4a0d-4e3c-bfe6-430a46fa7a92"),
+        DocumentKind::Investigation,
+        Revision::new(1).unwrap(),
+        serde_json::json!({
+            "type": "doc",
+            "content": [
+                {"type": "heading", "attrs": {"level": 1}, "content": [{"type": "text", "text": "Assessment"}]},
+                {"type": "paragraph", "content": [{"type": "text", "text": "First paragraph."}]},
+                {"type": "paragraph"},
+                {"type": "paragraph", "content": [{"type": "text", "text": "Second paragraph."}]}
+            ]
+        }),
+    )
+    .unwrap()
+}
+
 fn snapshot(
     format: PublicationFormat,
     paper_size: PaperSize,
@@ -184,6 +202,71 @@ fn narrative(text: &str) -> GuidedReportFieldValue {
             "content": [{"type": "text", "text": text}]
         }]
     }))
+}
+
+#[test]
+fn double_enter_preserves_one_internal_paragraph_gap_in_publication_ir() {
+    let publication =
+        PublicationIr::from_freeform(&document_with_an_intentional_paragraph_gap()).unwrap();
+    let assessment = publication
+        .sections()
+        .iter()
+        .find(|section| section.title() == "Analysis")
+        .unwrap();
+
+    assert!(matches!(
+        assessment.blocks(),
+        [
+            PublicationBlock::Paragraph(_),
+            PublicationBlock::ParagraphGap,
+            PublicationBlock::Paragraph(_)
+        ]
+    ));
+
+    let html = String::from_utf8(
+        render_publication(
+            &publication,
+            &snapshot(
+                PublicationFormat::Html,
+                PaperSize::A4,
+                PageOrientation::Portrait,
+            ),
+            Some(&brand()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(html.contains(
+        "First paragraph.</p><div class=\"paragraph-gap\" aria-hidden=\"true\"></div><p>Second paragraph."
+    ));
+
+    let docx = render_publication(
+        &publication,
+        &snapshot(
+            PublicationFormat::Docx,
+            PaperSize::A4,
+            PageOrientation::Portrait,
+        ),
+        Some(&brand()),
+    )
+    .unwrap();
+    let document_xml = docx_document_xml(&docx);
+    let first = document_xml.find("First paragraph.").unwrap();
+    let second = document_xml.find("Second paragraph.").unwrap();
+    let between = &document_xml[first..second];
+    assert_eq!(between.matches("<w:p ").count(), 2);
+
+    let pdf = render_publication(
+        &publication,
+        &snapshot(
+            PublicationFormat::Pdf,
+            PaperSize::A4,
+            PageOrientation::Portrait,
+        ),
+        Some(&brand()),
+    )
+    .unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
 }
 
 #[test]

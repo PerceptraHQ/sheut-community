@@ -196,6 +196,8 @@ const TYPST_TEMPLATE: &str = r##"
 #let render-block(item) = {
   if item.kind == "paragraph" {
     block(below: 6pt)[#render-inline(item.spans)]
+  } else if item.kind == "paragraph-gap" {
+    block(height: 8pt)[]
   } else if item.kind == "label" {
     block(below: 6pt)[
       #text(font: inputs.heading_font, weight: 680, item.label + ":") #item.text
@@ -487,6 +489,7 @@ impl PublicationIr {
         let mut title = None;
         let mut sections = Vec::new();
         let mut current = PublicationSection::new("document", "Analysis");
+        let mut pending_paragraph_gap = false;
         for node in document
             .root()
             .get("content")
@@ -495,6 +498,7 @@ impl PublicationIr {
             .flatten()
         {
             if node.get("type").and_then(JsonValue::as_str) == Some("heading") {
+                pending_paragraph_gap = false;
                 let text = node_text(node).trim().to_owned();
                 let level = node
                     .get("attrs")
@@ -513,9 +517,7 @@ impl PublicationIr {
                 }
                 continue;
             }
-            if let Some(block) = block_from_node(node) {
-                current.blocks.push(block);
-            }
+            append_content_node(node, &mut current.blocks, &mut pending_paragraph_gap);
         }
         if !current.blocks.is_empty() || sections.is_empty() {
             sections.push(current);
@@ -892,6 +894,7 @@ impl PublicationSection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublicationBlock {
     Paragraph(PublicationRichText),
+    ParagraphGap,
     LabeledText {
         label: String,
         text: String,
@@ -925,6 +928,7 @@ fn publication_blocks_plain_text(blocks: &[PublicationBlock]) -> String {
                     .iter()
                     .map(PublicationInlineSpan::text)
                     .collect::<String>(),
+                PublicationBlock::ParagraphGap => String::new(),
                 PublicationBlock::LabeledText { label, text } => format!("{label}: {text}"),
                 PublicationBlock::MetadataTable { rows } => rows
                     .iter()
@@ -1310,6 +1314,7 @@ fn render_html(
             ".report-administration,.release-history,.table-of-contents,main{{width:min(100% - 2rem,900px);margin:0 auto}}.report-administration,.release-history,.table-of-contents{{min-height:100vh;padding:3rem 0}}.report-administration .label{{font-weight:680}}.report-administration .metadata-table{{margin-top:1.25rem;font-size:.88rem}}.report-administration .metadata-table th{{width:30%;font-family:var(--heading-font),sans-serif;font-size:.72rem;letter-spacing:.045em}}.report-administration .metadata-table td{{white-space:pre-line}}.release-history table{{margin-top:2.5rem}}.table-of-contents ol{{margin:2.5rem 0 0;padding:0;list-style:none}}.table-of-contents li{{border-bottom:1px solid #d5dce1}}.table-of-contents a{{display:block;padding:.85rem .25rem;color:inherit;font-family:var(--heading-font),sans-serif;font-weight:620;text-decoration:none}}",
             "main{{padding:2.5rem 0 4rem}}section{{margin:0 0 1.65rem}}.section-band{{margin:0 0 .9rem;padding:.48rem .8rem;background:var(--band);color:#111827;text-align:center;font-size:1rem;font-weight:730;letter-spacing:.16em;text-transform:uppercase}}",
             "h3{{margin:1.15rem 0 .45rem;color:var(--primary);font-size:1.15rem;line-height:1.25}}p,li,td{{font-family:var(--body-font),serif;font-size:.94rem;line-height:1.48}}.label{{font-family:var(--heading-font),sans-serif;font-weight:680}}aside{{border-left:3px solid var(--secondary);background:#f1f4f6;padding:.75rem 1rem;font-family:var(--body-font),serif}}",
+            ".paragraph-gap{{height:.8rem}}",
             ".table-wrap{{overflow-x:auto}}table{{width:100%;border-collapse:collapse;font-size:.76rem}}th,td{{border:1px solid #bcc5cc;padding:.45rem;text-align:left;vertical-align:top}}th{{background:#f1f4f6;font-size:.68rem;letter-spacing:.035em;text-transform:uppercase}}.evidence-image{{margin:1rem 0;break-inside:avoid}}.evidence-image img{{display:block;max-width:100%;max-height:70vh;margin:auto;object-fit:contain}}.evidence-image figcaption{{margin-top:.4rem;color:#4b5563;font-size:.78rem;text-align:center}}",
             ".page-furniture{{width:min(100% - 2rem,900px);margin:0 auto 1rem;padding-top:.55rem;border-top:1px solid #111827;justify-content:space-between;gap:1rem;font-size:.72rem}}.page-furniture>span{{display:grid;flex:1}}.page-furniture>span:nth-child(2){{text-align:center}}.page-furniture>span:last-child{{text-align:right}}.page-furniture small{{margin-top:.25rem}}",
             "@media(max-width:650px){{.cover-grid{{grid-template-columns:1fr;gap:2rem;margin-top:3rem}}.report-family{{max-width:10ch}}.cover-footer{{grid-template-columns:1fr 1fr}}.cover-footer div:first-child{{grid-column:1/-1}}.page-furniture{{flex-direction:column}}.page-furniture>span,.page-furniture>span:nth-child(2),.page-furniture>span:last-child{{text-align:left}}}}",
@@ -1346,6 +1351,9 @@ fn render_html_block(
             output.push_str("<p>");
             render_html_rich_text(text, output);
             output.push_str("</p>");
+        }
+        PublicationBlock::ParagraphGap => {
+            output.push_str("<div class=\"paragraph-gap\" aria-hidden=\"true\"></div>");
         }
         PublicationBlock::LabeledText { label, text } => {
             output.push_str("<p><span class=\"label\">");
@@ -1867,6 +1875,7 @@ fn add_docx_block(
         PublicationBlock::Paragraph(text) => {
             document.add_paragraph(add_docx_rich_text(Paragraph::new(), text, fonts, false))
         }
+        PublicationBlock::ParagraphGap => document.add_paragraph(Paragraph::new()),
         PublicationBlock::LabeledText { label, text } => document.add_paragraph(
             Paragraph::new()
                 .add_run(heading_run(fonts, format!("{label}: ")).bold().size(20))
@@ -2314,6 +2323,9 @@ fn typst_block(
             value.insert("kind".into(), "paragraph".into_value());
             value.insert("spans".into(), typst_rich_text(text).into_value());
         }
+        PublicationBlock::ParagraphGap => {
+            value.insert("kind".into(), "paragraph-gap".into_value());
+        }
         PublicationBlock::LabeledText { label, text } => {
             value.insert("kind".into(), "label".into_value());
             value.insert("label".into(), label.clone().into_value());
@@ -2410,15 +2422,40 @@ fn typst_rich_text(text: &PublicationRichText) -> Vec<Dict> {
 }
 
 fn append_document_blocks(root: &JsonValue, output: &mut Vec<PublicationBlock>) {
+    let mut pending_paragraph_gap = false;
     for node in root
         .get("content")
         .and_then(JsonValue::as_array)
         .into_iter()
         .flatten()
     {
-        if let Some(block) = block_from_node(node) {
-            output.push(block);
+        append_content_node(node, output, &mut pending_paragraph_gap);
+    }
+}
+
+fn append_content_node(
+    node: &JsonValue,
+    output: &mut Vec<PublicationBlock>,
+    pending_paragraph_gap: &mut bool,
+) {
+    let block = if node.get("type").and_then(JsonValue::as_str) == Some("paragraph") {
+        let Some(text) = PublicationRichText::from_node(node) else {
+            if !output.is_empty() {
+                *pending_paragraph_gap = true;
+            }
+            return;
+        };
+        Some(PublicationBlock::Paragraph(text))
+    } else {
+        block_from_node(node)
+    };
+
+    if let Some(block) = block {
+        if *pending_paragraph_gap {
+            output.push(PublicationBlock::ParagraphGap);
+            *pending_paragraph_gap = false;
         }
+        output.push(block);
     }
 }
 
@@ -2769,6 +2806,12 @@ mod tests {
             fit_image_dimensions(2_000_000, 1_000_000, 6_000_000, 8_000_000),
             (2_000_000, 1_000_000)
         );
+    }
+
+    #[test]
+    fn typst_template_renders_intentional_paragraph_gaps_as_fixed_space() {
+        assert!(TYPST_TEMPLATE.contains("item.kind == \"paragraph-gap\""));
+        assert!(TYPST_TEMPLATE.contains("block(height: 8pt)[]"));
     }
 
     #[test]
