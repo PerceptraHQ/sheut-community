@@ -78,7 +78,7 @@ it("copies a report structure and adds a project-local custom table", async () =
   );
   await user.type(screen.getByLabelText("Section title"), "Social profiles");
   await user.click(screen.getByRole("combobox", { name: "Section content type" }));
-  await user.click(screen.getByRole("option", { name: "Structured table" }));
+  await user.click(await screen.findByRole("option", { name: "Structured table" }));
   expect(screen.getByRole("combobox", { name: "Section content type" })).toHaveTextContent(
     "Structured table",
   );
