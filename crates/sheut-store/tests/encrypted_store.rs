@@ -279,7 +279,7 @@ fn illicit_ecosystem_upgrade_persists_as_a_new_recoverable_revision() {
     let path = directory.path("illicit-upgrade.sheut");
     let template_id = LocalId::parse("6fba43e4-fcac-5b12-b37a-17aa0d4e99ca").unwrap();
     let source_template = report_template_revision(template_id, Revision::new(1).unwrap()).unwrap();
-    let target_template = report_template_revision(template_id, Revision::new(3).unwrap()).unwrap();
+    let target_template = report_template_revision(template_id, Revision::new(4).unwrap()).unwrap();
     let blank = GuidedReport::new_blank(
         LocalId::parse(SECOND_DOCUMENT_ID).unwrap(),
         &source_template,

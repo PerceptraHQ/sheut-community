@@ -57,6 +57,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "list_report_project_data",
     "create_guided_report",
     "save_guided_report",
+    "get_guided_report_readiness",
     "update_guided_report_section_disposition",
     "upgrade_illicit_ecosystem_report",
     "delete_guided_report",

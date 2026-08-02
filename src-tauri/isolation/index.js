@@ -504,6 +504,7 @@
       payload.expectedRevision >= 1 &&
       isReportTitle(payload.title) &&
       isGuidedReportFields(payload.fields),
+    get_guided_report_readiness: (payload) => ids(payload, "projectId", "reportId"),
     update_guided_report_section_disposition: (payload) =>
       ids(payload, "projectId", "reportId") &&
       Number.isSafeInteger(payload.expectedRevision) &&

@@ -77,6 +77,7 @@ pub fn run() {
             commands::list_report_project_data,
             commands::create_guided_report,
             commands::save_guided_report,
+            commands::get_guided_report_readiness,
             commands::update_guided_report_section_disposition,
             commands::upgrade_illicit_ecosystem_report,
             commands::delete_guided_report,

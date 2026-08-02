@@ -6,6 +6,7 @@ import {
   deleteEvidenceFile,
   deleteGuidedReport,
   exportGuidedReport,
+  getGuidedReportReadiness,
   importEvidenceFile,
   importEvidenceImage,
   listEvidenceFiles,
@@ -45,6 +46,7 @@ describe("guided report command boundary", () => {
   });
 
   it("uses bounded commands for section disposition and explicit template upgrade", async () => {
+    await getGuidedReportReadiness(PROJECT_ID, REPORT_ID);
     await updateGuidedReportSectionDisposition(
       PROJECT_ID,
       REPORT_ID,
@@ -54,14 +56,18 @@ describe("guided report command boundary", () => {
     );
     await upgradeIllicitEcosystemReport(PROJECT_ID, REPORT_ID, 5);
 
-    expect(invoke).toHaveBeenNthCalledWith(1, "update_guided_report_section_disposition", {
+    expect(invoke).toHaveBeenNthCalledWith(1, "get_guided_report_readiness", {
+      projectId: PROJECT_ID,
+      reportId: REPORT_ID,
+    });
+    expect(invoke).toHaveBeenNthCalledWith(2, "update_guided_report_section_disposition", {
       projectId: PROJECT_ID,
       reportId: REPORT_ID,
       expectedRevision: 4,
       sectionKey: "attack_mappings",
       disposition: "not_applicable",
     });
-    expect(invoke).toHaveBeenNthCalledWith(2, "upgrade_illicit_ecosystem_report", {
+    expect(invoke).toHaveBeenNthCalledWith(3, "upgrade_illicit_ecosystem_report", {
       projectId: PROJECT_ID,
       reportId: REPORT_ID,
       expectedRevision: 5,

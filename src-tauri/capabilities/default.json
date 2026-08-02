@@ -69,6 +69,7 @@
     "allow-list-report-project-data",
     "allow-create-guided-report",
     "allow-save-guided-report",
+    "allow-get-guided-report-readiness",
     "allow-update-guided-report-section-disposition",
     "allow-upgrade-illicit-ecosystem-report",
     "allow-delete-guided-report",

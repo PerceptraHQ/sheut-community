@@ -22,9 +22,9 @@ use sheut_core::{
     MAX_EVIDENCE_FILE_BYTES, MAX_IMAGE_ATTACHMENT_BYTES, MitreCatalog, MitreTechniqueReference,
     PageFurniture, PageOrientation, PaperSize, ProjectDataReferenceKind, PublicationRecord,
     PublicationReleaseEntry, PublicationSettings, PublicationSnapshot, PublicationSource,
-    PublicationStatus, RenderedDocument, ReportSectionDisposition, ReportTemplateDefinition,
-    ReportTemplateSection, Revision, SemanticRelationshipDraft, TechniqueAssessment,
-    TechniqueObservation, TechniqueOutcome, TlpMarking, render_document,
+    PublicationStatus, RenderedDocument, ReportReadinessWarning, ReportSectionDisposition,
+    ReportTemplateDefinition, ReportTemplateSection, Revision, SemanticRelationshipDraft,
+    TechniqueAssessment, TechniqueObservation, TechniqueOutcome, TlpMarking, render_document,
 };
 use sheut_mitre::{
     CatalogSnapshot, CatalogStatus, CatalogStore, MAX_MAPPING_FILE_BYTES, MAX_MITRE_SOURCE_BYTES,
@@ -1777,6 +1777,21 @@ pub(super) async fn save_guided_report(
             fields,
             now_unix_ms,
         )
+    })
+    .await
+}
+
+#[tauri::command]
+pub(super) async fn get_guided_report_readiness(
+    project_id: String,
+    report_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<ReportReadinessWarning>, CommandError> {
+    let project_id = parse_project_id(&project_id)?;
+    let report_id = parse_document_id(&report_id)?;
+    let now_unix_ms = now_unix_ms()?;
+    with_manager(Arc::clone(&state.projects), move |manager| {
+        manager.guided_report_readiness(project_id, report_id, now_unix_ms)
     })
     .await
 }

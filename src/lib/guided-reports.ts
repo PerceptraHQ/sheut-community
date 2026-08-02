@@ -86,6 +86,12 @@ export interface GuidedReport {
 
 export type ReportSectionDisposition = "active" | "not_applicable";
 
+export interface ReportReadinessWarning {
+  section_key: string;
+  field_key: string;
+  message: string;
+}
+
 export interface EvidenceFileMetadata {
   id: string;
   revision: number;
@@ -159,6 +165,16 @@ export function saveGuidedReport(
     expectedRevision,
     title,
     fields,
+  });
+}
+
+export function getGuidedReportReadiness(
+  projectId: string,
+  reportId: string,
+): Promise<ReportReadinessWarning[]> {
+  return invoke<ReportReadinessWarning[]>("get_guided_report_readiness", {
+    projectId,
+    reportId,
   });
 }
 

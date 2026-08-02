@@ -540,6 +540,7 @@ function validPayload(command) {
       title: "Quarterly threat report",
       fields: { report_title: { type: "text", value: "Quarterly threat report" } },
     },
+    get_guided_report_readiness: { projectId, reportId: documentId },
     update_guided_report_section_disposition: {
       projectId,
       reportId: documentId,
