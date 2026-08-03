@@ -20,8 +20,9 @@ use docx_rs::{
 };
 use serde_json::Value as JsonValue;
 use sheut_core::{
-    BrandProfile, BrandTypeface, CoverTreatment, DocumentEnvelope, GuidedReport,
-    GuidedReportFieldValue, ImageMediaType, LocalId, PageOrientation, PublicationFormat,
+    BrandProfile, BrandTypeface, CoverTreatment, DocumentEnvelope, EvidenceFileMetadata,
+    GuidedReport, GuidedReportFieldValue, GuidedReportLinkedRows, ImageMediaType, LocalId,
+    PageOrientation, ProjectDataReference, ProjectDataReferenceKind, PublicationFormat,
     PublicationSnapshot, ReportFieldKind, ReportTemplateDefinition, render_document,
 };
 use typst::foundations::{Bytes, Dict, IntoValue, Smart};
@@ -33,6 +34,14 @@ const GEIST_MONO_FONT: &[u8] =
 const SOURCE_SERIF_FONT: &[u8] =
     include_bytes!("../../../src-tauri/assets/fonts/SourceSerif4-Variable.ttf");
 const SHEUT_MARK: &[u8] = include_bytes!("../../../src-tauri/icons/128x128@2x.png");
+const MAX_COMPARABLE_TABLE_COLUMNS: usize = 5;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EvidenceReferenceSummary {
+    id: LocalId,
+    label: String,
+    section_titles: Vec<String>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PublicationFonts {
@@ -142,6 +151,7 @@ const TYPST_TEMPLATE: &str = r##"
 #let paper = rgb(inputs.background_color)
 #let rule = rgb("#B8C2CC")
 #let band = rgb(inputs.band_color)
+#let muted = rgb(75, 85, 99)
 #let tlp-fg = rgb(inputs.tlp_foreground)
 #let tlp-bg = rgb(inputs.tlp_background)
 #let report-number = if inputs.report_number == "" { "DRAFT" } else { inputs.report_number }
@@ -196,6 +206,8 @@ const TYPST_TEMPLATE: &str = r##"
 #let render-block(item) = {
   if item.kind == "paragraph" {
     block(below: 6pt)[#render-inline(item.spans)]
+  } else if item.kind == "paragraph-gap" {
+    block(height: 8pt)[]
   } else if item.kind == "label" {
     block(below: 6pt)[
       #text(font: inputs.heading_font, weight: 680, item.label + ":") #item.text
@@ -234,21 +246,125 @@ const TYPST_TEMPLATE: &str = r##"
     ]
   } else if item.kind == "table" {
     block(width: 100%, below: 8pt)[
-      #set text(font: inputs.body_font, size: 7.2pt, hyphenate: false)
+      #set text(font: inputs.body_font, size: 8.2pt, hyphenate: false)
       #table(
         columns: item.columns,
-        inset: (x: 3.5pt, y: 4pt),
+        inset: (x: 4pt, y: 4.5pt),
         stroke: 0.35pt + rule,
         fill: (x, y) => if y == 0 { rgb("#F1F4F6") } else { paper },
         table.header(..item.headers.map(value => text(
           font: inputs.heading_font,
-          size: 6.8pt,
+          size: 7.2pt,
           weight: 700,
           tracking: 0.035em,
           upper(value),
         ))),
         ..item.cells,
       )
+    ]
+  } else if item.kind == "structured-records" {
+    block(width: 100%, below: 8pt)[
+      #text(font: inputs.heading_font, size: 10pt, weight: 700, fill: primary, item.label)
+      #v(4pt)
+      #for (index, record) in item.records.enumerate() {
+        block(
+          width: 100%,
+          inset: 7pt,
+          below: 6pt,
+          fill: rgb("#F7F9FA"),
+          stroke: 0.45pt + rule,
+          radius: 2pt,
+          breakable: false,
+        )[
+          #text(
+            font: inputs.heading_font,
+            size: 8pt,
+            weight: 700,
+            tracking: 0.025em,
+            fill: primary,
+            "RECORD " + str(index + 1) + " · " + record.title,
+          )
+          #v(4pt)
+          #set text(font: inputs.body_font, size: 8.5pt, hyphenate: false)
+          #table(
+            columns: (31%, 69%),
+            inset: (x: 4pt, y: 3.5pt),
+            stroke: (x, y) => if y == 0 { none } else { (top: 0.3pt + rule) },
+            ..record.cells.enumerate().map(((cell-index, cell)) => if calc.even(cell-index) {
+              text(font: inputs.heading_font, size: 7.2pt, weight: 700, upper(cell))
+            } else {
+              cell
+            }),
+          )
+        ]
+      }
+    ]
+  } else if item.kind == "reference-list" {
+    block(width: 100%, below: 8pt)[
+      #if item.label != "" {
+        text(font: inputs.heading_font, size: 10pt, weight: 700, fill: primary, item.label)
+        v(4pt)
+      }
+      #for reference in item.items {
+        block(
+          width: 100%,
+          inset: (x: 7pt, y: 5pt),
+          below: 4pt,
+          fill: rgb("#F7F9FA"),
+          stroke: (left: 2pt + secondary),
+        )[
+          #text(font: inputs.heading_font, size: 8.5pt, weight: 700, reference.title) \
+          #text(font: inputs.body_font, size: 8pt, fill: muted, reference.detail)
+        ]
+      }
+    ]
+  } else if item.kind == "evidence-index" {
+    block(width: 100%, below: 8pt)[
+      #for entry in item.items {
+        block(
+          width: 100%,
+          inset: 7pt,
+          below: 6pt,
+          fill: rgb("#F7F9FA"),
+          stroke: 0.45pt + rule,
+          radius: 2pt,
+          breakable: false,
+        )[
+          #text(font: inputs.heading_font, size: 9pt, weight: 700, fill: primary, entry.title)
+          #v(4pt)
+          #set text(font: inputs.body_font, size: 8.2pt, hyphenate: false)
+          #table(
+            columns: (25%, 75%),
+            inset: (x: 4pt, y: 3pt),
+            stroke: (x, y) => if y == 0 { none } else { (top: 0.3pt + rule) },
+            ..entry.cells.enumerate().map(((cell-index, cell)) => if calc.even(cell-index) {
+              text(font: inputs.heading_font, size: 7pt, weight: 700, upper(cell))
+            } else {
+              cell
+            }),
+          )
+          #if entry.has_image {
+            v(5pt)
+            align(center)[
+              image(
+                entry.bytes,
+                width: entry.width_mm * 1mm,
+                height: entry.height_mm * 1mm,
+                fit: "contain",
+                alt: entry.title,
+              )
+              v(3pt)
+              text(
+                font: inputs.body_font,
+                size: 7.5pt,
+                style: "italic",
+                fill: muted,
+                "Evidence image — " + entry.title,
+              )
+            ]
+          }
+        ]
+      }
     ]
   } else if item.kind == "evidence-image" {
     block(width: 100%, below: 8pt, breakable: false)[
@@ -261,7 +377,7 @@ const TYPST_TEMPLATE: &str = r##"
           alt: item.alt,
         )
         #v(3pt)
-        #text(font: inputs.body_font, size: 7.5pt, style: "italic", fill: rgb("#4B5563"), item.caption)
+        #text(font: inputs.body_font, size: 7.5pt, style: "italic", fill: muted, item.caption)
       ]
     ]
   }
@@ -335,8 +451,7 @@ const TYPST_TEMPLATE: &str = r##"
         align: horizon,
         image(inputs.logo, width: 22pt, height: 22pt, alt: "Sheut mark"),
         [
-          #text(font: inputs.heading_font, size: 10pt, weight: 720, tracking: 0.06em, fill: white, upper(inputs.brand_name)) \
-          #text(font: inputs.heading_font, size: 6.5pt, weight: 520, tracking: 0.12em, fill: luma(220), [SHEUT REPORTING])
+          #text(font: inputs.heading_font, size: 10pt, weight: 720, tracking: 0.06em, fill: white, upper(inputs.brand_name))
         ],
       )
     ],
@@ -487,6 +602,7 @@ impl PublicationIr {
         let mut title = None;
         let mut sections = Vec::new();
         let mut current = PublicationSection::new("document", "Analysis");
+        let mut pending_paragraph_gap = false;
         for node in document
             .root()
             .get("content")
@@ -495,6 +611,7 @@ impl PublicationIr {
             .flatten()
         {
             if node.get("type").and_then(JsonValue::as_str) == Some("heading") {
+                pending_paragraph_gap = false;
                 let text = node_text(node).trim().to_owned();
                 let level = node
                     .get("attrs")
@@ -513,9 +630,7 @@ impl PublicationIr {
                 }
                 continue;
             }
-            if let Some(block) = block_from_node(node) {
-                current.blocks.push(block);
-            }
+            append_content_node(node, &mut current.blocks, &mut pending_paragraph_gap);
         }
         if !current.blocks.is_empty() || sections.is_empty() {
             sections.push(current);
@@ -545,6 +660,7 @@ impl PublicationIr {
         }
         let included = report.included_sections();
         let mut sections = Vec::new();
+        let mut evidence_references = Vec::new();
         for definition in template
             .sections()
             .iter()
@@ -555,6 +671,26 @@ impl PublicationIr {
             })
         {
             let mut section = PublicationSection::new(definition.key(), definition.title());
+            for field in definition.fields() {
+                if let Some(GuidedReportFieldValue::ProjectReferences(references)) =
+                    report.fields().get(field.key())
+                {
+                    collect_evidence_references(
+                        &mut evidence_references,
+                        references,
+                        definition.title(),
+                    );
+                }
+                if let Some(GuidedReportFieldValue::LinkedRows(rows)) =
+                    report.fields().get(field.key())
+                {
+                    collect_linked_row_evidence_references(
+                        &mut evidence_references,
+                        rows,
+                        definition.title(),
+                    );
+                }
+            }
             if definition.key() == "report_administration" {
                 let mut rows = vec![("Title".to_owned(), report.title().to_owned())];
                 for field in definition.fields() {
@@ -632,44 +768,30 @@ impl PublicationIr {
                         section.blocks.extend(blocks);
                     }
                     GuidedReportFieldValue::Rows(rows) if !rows.is_empty() => {
-                        let headers = field.columns().to_vec();
-                        let table_rows = rows
-                            .iter()
-                            .filter_map(|row| {
-                                let values = headers
-                                    .iter()
-                                    .map(|column| {
-                                        row.get(column)
-                                            .or_else(|| row.get(&section_key(column)))
-                                            .map(|value| value.trim().to_owned())
-                                            .unwrap_or_default()
-                                    })
-                                    .collect::<Vec<_>>();
-                                values
-                                    .iter()
-                                    .any(|value| !value.is_empty())
-                                    .then_some(values)
-                            })
-                            .collect::<Vec<_>>();
-                        if !table_rows.is_empty() {
-                            section.blocks.push(PublicationBlock::Table {
-                                headers,
-                                rows: table_rows,
-                            });
+                        if let Some(block) = guided_rows_block(field.label(), field.columns(), rows)
+                        {
+                            section.blocks.push(block);
+                        }
+                    }
+                    GuidedReportFieldValue::LinkedRows(rows) if !rows.rows().is_empty() => {
+                        if let Some(block) =
+                            guided_rows_block(field.label(), field.columns(), rows.rows())
+                        {
+                            section.blocks.push(block);
                         }
                     }
                     GuidedReportFieldValue::ProjectReferences(references)
-                        if !references.is_empty() =>
+                        if !references.is_empty() && definition.key() != "evidence_appendix" =>
                     {
-                        section.blocks.push(PublicationBlock::Table {
-                            headers: vec!["Reference".to_owned(), "Type".to_owned()],
-                            rows: references
+                        section.blocks.push(PublicationBlock::ReferenceList {
+                            label: Some(field.label().to_owned()),
+                            items: references
                                 .iter()
                                 .map(|reference| {
-                                    vec![
+                                    (
                                         reference.label().to_owned(),
                                         reference_kind_label(reference.kind()).to_owned(),
-                                    ]
+                                    )
                                 })
                                 .collect(),
                         });
@@ -681,6 +803,8 @@ impl PublicationIr {
                 sections.push(section);
             }
         }
+        collect_evidence_images(&mut evidence_references, &sections);
+        append_evidence_reference_index(&mut sections, evidence_references);
         finalize_evidence_images(&mut sections);
         sections.retain(|section| !section.blocks.is_empty());
         let metadata = [
@@ -760,6 +884,29 @@ impl PublicationIr {
                 _ => None,
             })
             .collect()
+    }
+
+    #[must_use]
+    pub fn evidence_ids(&self) -> Vec<LocalId> {
+        let mut ids = Vec::new();
+        for block in self.sections.iter().flat_map(PublicationSection::blocks) {
+            match block {
+                PublicationBlock::EvidenceImage { evidence_id, .. } => {
+                    if !ids.contains(evidence_id) {
+                        ids.push(*evidence_id);
+                    }
+                }
+                PublicationBlock::EvidenceIndex { items } => {
+                    for item in items {
+                        if !ids.contains(&item.evidence_id) {
+                            ids.push(item.evidence_id);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        ids
     }
 
     fn selected_for(&self, snapshot: &PublicationSnapshot) -> Self {
@@ -892,6 +1039,7 @@ impl PublicationSection {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublicationBlock {
     Paragraph(PublicationRichText),
+    ParagraphGap,
     LabeledText {
         label: String,
         text: String,
@@ -906,6 +1054,17 @@ pub enum PublicationBlock {
         headers: Vec<String>,
         rows: Vec<Vec<String>>,
     },
+    StructuredRecords {
+        label: String,
+        records: Vec<Vec<(String, String)>>,
+    },
+    ReferenceList {
+        label: Option<String>,
+        items: Vec<(String, String)>,
+    },
+    EvidenceIndex {
+        items: Vec<EvidenceIndexItem>,
+    },
     EvidenceImage {
         evidence_id: LocalId,
         alt: String,
@@ -913,6 +1072,30 @@ pub enum PublicationBlock {
         placement: EvidenceImagePlacement,
         figure_label: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvidenceIndexItem {
+    evidence_id: LocalId,
+    label: String,
+    section_titles: Vec<String>,
+}
+
+impl EvidenceIndexItem {
+    #[must_use]
+    pub const fn evidence_id(&self) -> LocalId {
+        self.evidence_id
+    }
+
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    #[must_use]
+    pub fn section_titles(&self) -> &[String] {
+        &self.section_titles
+    }
 }
 
 fn publication_blocks_plain_text(blocks: &[PublicationBlock]) -> String {
@@ -925,6 +1108,7 @@ fn publication_blocks_plain_text(blocks: &[PublicationBlock]) -> String {
                     .iter()
                     .map(PublicationInlineSpan::text)
                     .collect::<String>(),
+                PublicationBlock::ParagraphGap => String::new(),
                 PublicationBlock::LabeledText { label, text } => format!("{label}: {text}"),
                 PublicationBlock::MetadataTable { rows } => rows
                     .iter()
@@ -944,6 +1128,37 @@ fn publication_blocks_plain_text(blocks: &[PublicationBlock]) -> String {
                     .join("\n"),
                 PublicationBlock::Table { headers, rows } => std::iter::once(headers.join(" | "))
                     .chain(rows.iter().map(|row| row.join(" | ")))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                PublicationBlock::StructuredRecords { label, records } => {
+                    std::iter::once(label.clone())
+                        .chain(records.iter().flat_map(|record| {
+                            record
+                                .iter()
+                                .map(|(field, value)| format!("{field}: {value}"))
+                        }))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }
+                PublicationBlock::ReferenceList { label, items } => label
+                    .iter()
+                    .cloned()
+                    .chain(
+                        items
+                            .iter()
+                            .map(|(title, detail)| format!("{title}: {detail}")),
+                    )
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                PublicationBlock::EvidenceIndex { items } => items
+                    .iter()
+                    .map(|item| {
+                        format!(
+                            "{}: Cited in {}",
+                            item.label,
+                            item.section_titles.join("; ")
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join("\n"),
                 PublicationBlock::EvidenceImage {
@@ -1040,6 +1255,7 @@ pub struct PublicationAssets {
     pub compact_mark: Option<Vec<u8>>,
     pub cover_artwork: Option<Vec<u8>>,
     pub evidence_images: HashMap<LocalId, Vec<u8>>,
+    pub evidence_metadata: HashMap<LocalId, EvidenceFileMetadata>,
 }
 
 pub fn render_publication(
@@ -1176,7 +1392,7 @@ fn render_html(
     body.push_str(&logo);
     body.push_str("\" alt=\"Sheut mark\"><span><strong>");
     body.push_str(&escape_html(brand_name));
-    body.push_str("</strong><small>Sheut reporting</small></span></div>");
+    body.push_str("</strong></span></div>");
     if let Some(tlp_marking) = tlp_marking {
         body.push_str("<div class=\"tlp-badge\" style=\"--tlp-bg:");
         body.push_str(tlp_background);
@@ -1300,7 +1516,7 @@ fn render_html(
             "*{{box-sizing:border-box}}body{{margin:0;background:#fff}}.sr-only{{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}}",
             ".report-banner{{position:relative;display:flex;min-height:100vh;overflow:hidden;flex-direction:column;padding:2rem max(1.5rem,calc((100vw - 900px)/2));color:#fff;background:linear-gradient(112deg,var(--primary),var(--secondary));page:cover}}.report-banner>*:not(.cover-artwork){{position:relative;z-index:1}}.cover-artwork{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.38}}",
             ".banner-top,.brand-lockup,.cover-grid,.page-furniture{{display:flex}}.banner-top{{align-items:flex-start;justify-content:space-between;gap:2rem}}",
-            ".brand-lockup{{align-items:center;gap:.65rem;text-transform:uppercase}}.brand-lockup img{{width:2.1rem;height:2.1rem}}.brand-lockup span{{display:grid}}.brand-lockup strong{{font-size:.85rem;letter-spacing:.08em}}.brand-lockup small{{font-size:.58rem;letter-spacing:.16em;color:#dbe5ed}}",
+            ".brand-lockup{{align-items:center;gap:.65rem;text-transform:uppercase}}.brand-lockup img{{width:2.1rem;height:2.1rem}}.brand-lockup span{{display:grid}}.brand-lockup strong{{font-size:.85rem;letter-spacing:.08em}}",
             ".tlp-badge,.tlp-footer-badge{{padding:.35rem .6rem;border:1px solid var(--tlp-fg);border-radius:2px;color:var(--tlp-fg);background:var(--tlp-bg);font-size:.75rem;letter-spacing:.07em}}",
             ".cover-grid{{display:grid;grid-template-columns:minmax(14rem,.85fr) minmax(18rem,1.15fr);gap:clamp(2rem,8vw,7rem);align-items:start;margin-top:clamp(4rem,12vh,8rem)}}",
             ".report-family{{margin:0;font-size:clamp(2.4rem,6vw,4.8rem);font-weight:750;line-height:.92;letter-spacing:.035em}}h1{{margin:0;max-width:22ch;font-size:clamp(1.35rem,3vw,2.25rem);font-weight:560;line-height:1.02}}h1,h2,h3,.report-family,.brand-lockup,.cover-meta,.cover-footer,.page-furniture,.tlp-badge{{font-family:var(--heading-font),sans-serif}}",
@@ -1310,7 +1526,8 @@ fn render_html(
             ".report-administration,.release-history,.table-of-contents,main{{width:min(100% - 2rem,900px);margin:0 auto}}.report-administration,.release-history,.table-of-contents{{min-height:100vh;padding:3rem 0}}.report-administration .label{{font-weight:680}}.report-administration .metadata-table{{margin-top:1.25rem;font-size:.88rem}}.report-administration .metadata-table th{{width:30%;font-family:var(--heading-font),sans-serif;font-size:.72rem;letter-spacing:.045em}}.report-administration .metadata-table td{{white-space:pre-line}}.release-history table{{margin-top:2.5rem}}.table-of-contents ol{{margin:2.5rem 0 0;padding:0;list-style:none}}.table-of-contents li{{border-bottom:1px solid #d5dce1}}.table-of-contents a{{display:block;padding:.85rem .25rem;color:inherit;font-family:var(--heading-font),sans-serif;font-weight:620;text-decoration:none}}",
             "main{{padding:2.5rem 0 4rem}}section{{margin:0 0 1.65rem}}.section-band{{margin:0 0 .9rem;padding:.48rem .8rem;background:var(--band);color:#111827;text-align:center;font-size:1rem;font-weight:730;letter-spacing:.16em;text-transform:uppercase}}",
             "h3{{margin:1.15rem 0 .45rem;color:var(--primary);font-size:1.15rem;line-height:1.25}}p,li,td{{font-family:var(--body-font),serif;font-size:.94rem;line-height:1.48}}.label{{font-family:var(--heading-font),sans-serif;font-weight:680}}aside{{border-left:3px solid var(--secondary);background:#f1f4f6;padding:.75rem 1rem;font-family:var(--body-font),serif}}",
-            ".table-wrap{{overflow-x:auto}}table{{width:100%;border-collapse:collapse;font-size:.76rem}}th,td{{border:1px solid #bcc5cc;padding:.45rem;text-align:left;vertical-align:top}}th{{background:#f1f4f6;font-size:.68rem;letter-spacing:.035em;text-transform:uppercase}}.evidence-image{{margin:1rem 0;break-inside:avoid}}.evidence-image img{{display:block;max-width:100%;max-height:70vh;margin:auto;object-fit:contain}}.evidence-image figcaption{{margin-top:.4rem;color:#4b5563;font-size:.78rem;text-align:center}}",
+            ".paragraph-gap{{height:.8rem}}",
+            ".table-wrap{{overflow-x:auto}}table{{width:100%;border-collapse:collapse;font-size:.82rem}}th,td{{border:1px solid #bcc5cc;padding:.5rem;text-align:left;vertical-align:top}}th{{background:#f1f4f6;font-size:.72rem;letter-spacing:.035em;text-transform:uppercase}}.structured-records,.reference-list,.evidence-index{{margin:1rem 0}}.structured-records>h3,.reference-list>h3{{margin-bottom:.65rem}}.structured-record,.evidence-index-item{{margin:.6rem 0;padding:.8rem;border:1px solid #c7d0d7;border-radius:.2rem;background:#f7f9fa;break-inside:avoid}}.structured-record h4,.evidence-index-item h4{{margin:0 0 .55rem;color:var(--primary);font-family:var(--heading-font),sans-serif;font-size:.78rem;letter-spacing:.035em;text-transform:uppercase}}.structured-record dl,.reference-list,.evidence-index-item dl{{display:grid;gap:0}}.structured-record dl,.evidence-index-item dl{{grid-template-columns:minmax(9rem,30%) 1fr;margin:0}}.structured-record dt,.structured-record dd,.evidence-index-item dt,.evidence-index-item dd{{margin:0;padding:.38rem .45rem;border-top:1px solid #d8dee3}}.structured-record dt,.evidence-index-item dt{{font-family:var(--heading-font),sans-serif;font-size:.71rem;font-weight:700;text-transform:uppercase}}.reference-item{{margin:.45rem 0;padding:.55rem .7rem;border-left:3px solid var(--secondary);background:#f7f9fa;break-inside:avoid}}.reference-item dt{{font-family:var(--heading-font),sans-serif;font-weight:700}}.reference-item dd{{margin:.18rem 0 0;color:#4b5563;font-size:.8rem}}.evidence-image{{margin:1rem 0;break-inside:avoid}}.evidence-image img{{display:block;max-width:100%;max-height:70vh;margin:auto;object-fit:contain}}.evidence-image figcaption{{margin-top:.4rem;color:#4b5563;font-size:.78rem;text-align:center}}",
             ".page-furniture{{width:min(100% - 2rem,900px);margin:0 auto 1rem;padding-top:.55rem;border-top:1px solid #111827;justify-content:space-between;gap:1rem;font-size:.72rem}}.page-furniture>span{{display:grid;flex:1}}.page-furniture>span:nth-child(2){{text-align:center}}.page-furniture>span:last-child{{text-align:right}}.page-furniture small{{margin-top:.25rem}}",
             "@media(max-width:650px){{.cover-grid{{grid-template-columns:1fr;gap:2rem;margin-top:3rem}}.report-family{{max-width:10ch}}.cover-footer{{grid-template-columns:1fr 1fr}}.cover-footer div:first-child{{grid-column:1/-1}}.page-furniture{{flex-direction:column}}.page-furniture>span,.page-furniture>span:nth-child(2),.page-furniture>span:last-child{{text-align:left}}}}",
             "@media print{{.evidence-image img{{max-height:var(--evidence-image-max-height)}}.report-banner{{height:100vh;min-height:0;margin:0;padding:15mm 16mm 14mm;break-after:page}}.report-administration,.release-history,.table-of-contents{{width:auto;height:calc(100vh - 36mm);min-height:0;padding:0;break-after:page}}.release-history table,.table-of-contents ol{{margin-top:15mm}}main{{width:auto;margin:0;padding:0}}section{{break-inside:auto}}.section-band{{break-after:avoid}}.table-wrap{{overflow:visible}}.page-furniture{{display:none}}}}",
@@ -1346,6 +1563,9 @@ fn render_html_block(
             output.push_str("<p>");
             render_html_rich_text(text, output);
             output.push_str("</p>");
+        }
+        PublicationBlock::ParagraphGap => {
+            output.push_str("<div class=\"paragraph-gap\" aria-hidden=\"true\"></div>");
         }
         PublicationBlock::LabeledText { label, text } => {
             output.push_str("<p><span class=\"label\">");
@@ -1402,6 +1622,78 @@ fn render_html_block(
                 output.push_str("</tr>");
             }
             output.push_str("</tbody></table></div>");
+        }
+        PublicationBlock::StructuredRecords { label, records } => {
+            output.push_str("<div class=\"structured-records\"><h3>");
+            output.push_str(&escape_html(label));
+            output.push_str("</h3>");
+            for (index, record) in records.iter().enumerate() {
+                output.push_str("<article class=\"structured-record\"><h4>Record ");
+                output.push_str(&(index.saturating_add(1)).to_string());
+                if let Some((_, title)) = record.first() {
+                    output.push_str(" · ");
+                    output.push_str(&escape_html(title));
+                }
+                output.push_str("</h4><dl>");
+                for (field, value) in record {
+                    output.push_str("<dt>");
+                    output.push_str(&escape_html(field));
+                    output.push_str("</dt><dd>");
+                    output.push_str(&escape_html(value));
+                    output.push_str("</dd>");
+                }
+                output.push_str("</dl></article>");
+            }
+            output.push_str("</div>");
+        }
+        PublicationBlock::ReferenceList { label, items } => {
+            output.push_str("<div class=\"reference-list\">");
+            if let Some(label) = label {
+                output.push_str("<h3>");
+                output.push_str(&escape_html(label));
+                output.push_str("</h3>");
+            }
+            output.push_str("<dl>");
+            for (title, detail) in items {
+                output.push_str("<div class=\"reference-item\"><dt>");
+                output.push_str(&escape_html(title));
+                output.push_str("</dt><dd>");
+                output.push_str(&escape_html(detail));
+                output.push_str("</dd></div>");
+            }
+            output.push_str("</dl></div>");
+        }
+        PublicationBlock::EvidenceIndex { items } => {
+            output.push_str("<div class=\"evidence-index\">");
+            for item in items {
+                output.push_str("<article class=\"evidence-index-item\"><h4>");
+                output.push_str(&escape_html(evidence_index_title(item, assets)));
+                output.push_str("</h4><dl>");
+                for (label, value) in evidence_index_details(item, assets) {
+                    output.push_str("<dt>");
+                    output.push_str(&escape_html(&label));
+                    output.push_str("</dt><dd>");
+                    output.push_str(&escape_html(&value));
+                    output.push_str("</dd>");
+                }
+                output.push_str("</dl>");
+                if let Some(bytes) =
+                    assets.and_then(|assets| assets.evidence_images.get(&item.evidence_id))
+                    && let Ok(media_type) = ImageMediaType::detect(bytes)
+                {
+                    output.push_str("<figure class=\"evidence-image\"><img src=\"data:");
+                    output.push_str(media_type.as_str());
+                    output.push_str(";base64,");
+                    output.push_str(&BASE64_STANDARD.encode(bytes));
+                    output.push_str("\" alt=\"");
+                    output.push_str(&escape_html(evidence_index_title(item, assets)));
+                    output.push_str("\"><figcaption>Evidence image — ");
+                    output.push_str(&escape_html(evidence_index_title(item, assets)));
+                    output.push_str("</figcaption></figure>");
+                }
+                output.push_str("</article>");
+            }
+            output.push_str("</div>");
         }
         PublicationBlock::EvidenceImage {
             evidence_id,
@@ -1569,13 +1861,10 @@ fn render_docx(
                 Paragraph::new()
                     .add_run(Run::new().add_image(Pic::new_with_dimensions(logo, 42, 42)))
                     .add_run(
-                        heading_run(
-                            fonts,
-                            format!("  {}  |  SHEUT REPORTING", brand_name.to_uppercase()),
-                        )
-                        .bold()
-                        .size(20)
-                        .color("FFFFFF"),
+                        heading_run(fonts, format!("  {}", brand_name.to_uppercase()))
+                            .bold()
+                            .size(20)
+                            .color("FFFFFF"),
                     ),
             )
             .vertical_align(VAlignType::Center)
@@ -1867,6 +2156,7 @@ fn add_docx_block(
         PublicationBlock::Paragraph(text) => {
             document.add_paragraph(add_docx_rich_text(Paragraph::new(), text, fonts, false))
         }
+        PublicationBlock::ParagraphGap => document.add_paragraph(Paragraph::new()),
         PublicationBlock::LabeledText { label, text } => document.add_paragraph(
             Paragraph::new()
                 .add_run(heading_run(fonts, format!("{label}: ")).bold().size(20))
@@ -1924,6 +2214,9 @@ fn add_docx_block(
             ))
         }),
         PublicationBlock::Table { headers, rows } => {
+            let column_width = content_width
+                .checked_div(headers.len())
+                .unwrap_or(content_width);
             let mut table_rows = Vec::with_capacity(rows.len() + 1);
             table_rows.push(TableRow::new(
                 headers
@@ -1937,7 +2230,7 @@ fn add_docx_block(
                             )
                             .vertical_align(VAlignType::Center)
                             .shading(Shading::new().fill("E6EDF2"))
-                            .width(2_400, WidthType::Dxa)
+                            .width(column_width, WidthType::Dxa)
                     })
                     .collect(),
             ));
@@ -1950,18 +2243,161 @@ fn add_docx_block(
                                     Paragraph::new().add_run(body_run(fonts, cell).size(18)),
                                 )
                                 .vertical_align(VAlignType::Center)
-                                .width(2_400, WidthType::Dxa)
+                                .width(column_width, WidthType::Dxa)
                         })
                         .collect(),
                 )
             }));
             document.add_table(
                 Table::new(table_rows)
-                    .set_grid(vec![2_400; headers.len()])
+                    .set_grid(vec![column_width; headers.len()])
                     .align(TableAlignmentType::Center)
-                    .width(2_400 * headers.len(), WidthType::Dxa)
+                    .width(content_width, WidthType::Dxa)
                     .style("TableGrid"),
             )
+        }
+        PublicationBlock::StructuredRecords { label, records } => {
+            let document = document.add_paragraph(
+                Paragraph::new()
+                    .keep_next(true)
+                    .add_run(heading_run(fonts, label).bold().size(21).color("133C55")),
+            );
+            records
+                .iter()
+                .enumerate()
+                .fold(document, |document, (index, record)| {
+                    let title = record.first().map_or_else(
+                        || format!("Record {}", index.saturating_add(1)),
+                        |(_, value)| format!("Record {} · {value}", index.saturating_add(1)),
+                    );
+                    let label_width = content_width.saturating_mul(3) / 10;
+                    let value_width = content_width.saturating_sub(label_width);
+                    let rows = record
+                        .iter()
+                        .map(|(field, value)| {
+                            TableRow::new(vec![
+                                TableCell::new()
+                                    .add_paragraph(
+                                        Paragraph::new()
+                                            .add_run(heading_run(fonts, field).bold().size(16)),
+                                    )
+                                    .shading(Shading::new().fill("F1F4F6"))
+                                    .width(label_width, WidthType::Dxa),
+                                TableCell::new()
+                                    .add_paragraph(
+                                        Paragraph::new().add_run(body_run(fonts, value).size(18)),
+                                    )
+                                    .width(value_width, WidthType::Dxa),
+                            ])
+                        })
+                        .collect();
+                    document
+                        .add_paragraph(
+                            shaded_paragraph("F7F9FA")
+                                .keep_next(true)
+                                .add_run(heading_run(fonts, title).bold().size(17).color("133C55")),
+                        )
+                        .add_table(
+                            Table::new(rows)
+                                .set_grid(vec![label_width, value_width])
+                                .align(TableAlignmentType::Center)
+                                .width(content_width, WidthType::Dxa)
+                                .style("TableGrid"),
+                        )
+                })
+        }
+        PublicationBlock::ReferenceList { label, items } => {
+            let document = if let Some(label) = label {
+                document.add_paragraph(
+                    Paragraph::new()
+                        .keep_next(true)
+                        .add_run(heading_run(fonts, label).bold().size(21).color("133C55")),
+                )
+            } else {
+                document
+            };
+            items.iter().fold(document, |document, (title, detail)| {
+                document.add_paragraph(
+                    shaded_paragraph("F7F9FA")
+                        .add_run(heading_run(fonts, title).bold().size(18))
+                        .add_run(
+                            body_run(fonts, format!("\n{detail}"))
+                                .size(17)
+                                .color("4B5563"),
+                        ),
+                )
+            })
+        }
+        PublicationBlock::EvidenceIndex { items } => {
+            items.iter().fold(document, |document, item| {
+                let label_width = content_width.saturating_mul(25) / 100;
+                let value_width = content_width.saturating_sub(label_width);
+                let rows = evidence_index_details(item, assets)
+                    .into_iter()
+                    .map(|(label, value)| {
+                        TableRow::new(vec![
+                            TableCell::new()
+                                .add_paragraph(
+                                    Paragraph::new()
+                                        .add_run(heading_run(fonts, label).bold().size(16)),
+                                )
+                                .shading(Shading::new().fill("F1F4F6"))
+                                .width(label_width, WidthType::Dxa),
+                            TableCell::new()
+                                .add_paragraph(
+                                    Paragraph::new().add_run(body_run(fonts, value).size(18)),
+                                )
+                                .width(value_width, WidthType::Dxa),
+                        ])
+                    })
+                    .collect();
+                let document = document
+                    .add_paragraph(
+                        shaded_paragraph("F7F9FA").keep_next(true).add_run(
+                            heading_run(fonts, evidence_index_title(item, assets))
+                                .bold()
+                                .size(18)
+                                .color("133C55"),
+                        ),
+                    )
+                    .add_table(
+                        Table::new(rows)
+                            .set_grid(vec![label_width, value_width])
+                            .align(TableAlignmentType::Center)
+                            .width(content_width, WidthType::Dxa)
+                            .style("TableGrid"),
+                    );
+                let Some(bytes) =
+                    assets.and_then(|assets| assets.evidence_images.get(&item.evidence_id))
+                else {
+                    return document;
+                };
+                let mut picture = Pic::new(bytes);
+                let fitted_size = fit_image_dimensions(
+                    picture.size.0,
+                    picture.size.1,
+                    evidence_image_bounds.max_width_emu,
+                    evidence_image_bounds.max_height_emu,
+                );
+                picture = picture.size(fitted_size.0, fitted_size.1);
+                document
+                    .add_paragraph(
+                        Paragraph::new()
+                            .align(AlignmentType::Center)
+                            .add_run(Run::new().add_image(picture)),
+                    )
+                    .add_paragraph(
+                        Paragraph::new().align(AlignmentType::Center).add_run(
+                            body_run(
+                                fonts,
+                                format!("Evidence image — {}", evidence_index_title(item, assets)),
+                            )
+                            .italic()
+                            .size(17)
+                            .color("4B5563"),
+                        ),
+                    )
+            })
         }
         PublicationBlock::EvidenceImage {
             evidence_id,
@@ -2314,6 +2750,9 @@ fn typst_block(
             value.insert("kind".into(), "paragraph".into_value());
             value.insert("spans".into(), typst_rich_text(text).into_value());
         }
+        PublicationBlock::ParagraphGap => {
+            value.insert("kind".into(), "paragraph-gap".into_value());
+        }
         PublicationBlock::LabeledText { label, text } => {
             value.insert("kind".into(), "label".into_value());
             value.insert("label".into(), label.clone().into_value());
@@ -2364,6 +2803,100 @@ fn typst_block(
                     .into_value(),
             );
         }
+        PublicationBlock::StructuredRecords { label, records } => {
+            value.insert("kind".into(), "structured-records".into_value());
+            value.insert("label".into(), label.clone().into_value());
+            value.insert(
+                "records".into(),
+                records
+                    .iter()
+                    .map(|record| {
+                        let mut record_value = Dict::new();
+                        record_value.insert(
+                            "title".into(),
+                            record
+                                .first()
+                                .map(|(_, value)| value.clone())
+                                .unwrap_or_else(|| "Untitled".to_owned())
+                                .into_value(),
+                        );
+                        record_value.insert(
+                            "cells".into(),
+                            record
+                                .iter()
+                                .flat_map(|(field, value)| [field.clone(), value.clone()])
+                                .collect::<Vec<_>>()
+                                .into_value(),
+                        );
+                        record_value
+                    })
+                    .collect::<Vec<_>>()
+                    .into_value(),
+            );
+        }
+        PublicationBlock::ReferenceList { label, items } => {
+            value.insert("kind".into(), "reference-list".into_value());
+            value.insert(
+                "label".into(),
+                label.as_deref().unwrap_or_default().into_value(),
+            );
+            value.insert(
+                "items".into(),
+                items
+                    .iter()
+                    .map(|(title, detail)| {
+                        let mut reference = Dict::new();
+                        reference.insert("title".into(), title.clone().into_value());
+                        reference.insert("detail".into(), detail.clone().into_value());
+                        reference
+                    })
+                    .collect::<Vec<_>>()
+                    .into_value(),
+            );
+        }
+        PublicationBlock::EvidenceIndex { items } => {
+            value.insert("kind".into(), "evidence-index".into_value());
+            value.insert(
+                "items".into(),
+                items
+                    .iter()
+                    .map(|item| {
+                        let mut entry = Dict::new();
+                        entry.insert(
+                            "title".into(),
+                            evidence_index_title(item, assets).into_value(),
+                        );
+                        entry.insert(
+                            "cells".into(),
+                            evidence_index_details(item, assets)
+                                .into_iter()
+                                .flat_map(|(label, value)| [label, value])
+                                .collect::<Vec<_>>()
+                                .into_value(),
+                        );
+                        if let Some(bytes) =
+                            assets.and_then(|assets| assets.evidence_images.get(&item.evidence_id))
+                        {
+                            let picture = Pic::new(bytes);
+                            let (width, height) = fit_image_dimensions(
+                                picture.size.0,
+                                picture.size.1,
+                                evidence_image_bounds.max_width_emu,
+                                evidence_image_bounds.max_height_emu,
+                            );
+                            entry.insert("has_image".into(), true.into_value());
+                            entry.insert("bytes".into(), Bytes::new(bytes.clone()).into_value());
+                            entry.insert("width_mm".into(), emu_to_whole_mm(width).into_value());
+                            entry.insert("height_mm".into(), emu_to_whole_mm(height).into_value());
+                        } else {
+                            entry.insert("has_image".into(), false.into_value());
+                        }
+                        entry
+                    })
+                    .collect::<Vec<_>>()
+                    .into_value(),
+            );
+        }
         PublicationBlock::EvidenceImage {
             evidence_id,
             alt,
@@ -2410,15 +2943,40 @@ fn typst_rich_text(text: &PublicationRichText) -> Vec<Dict> {
 }
 
 fn append_document_blocks(root: &JsonValue, output: &mut Vec<PublicationBlock>) {
+    let mut pending_paragraph_gap = false;
     for node in root
         .get("content")
         .and_then(JsonValue::as_array)
         .into_iter()
         .flatten()
     {
-        if let Some(block) = block_from_node(node) {
-            output.push(block);
+        append_content_node(node, output, &mut pending_paragraph_gap);
+    }
+}
+
+fn append_content_node(
+    node: &JsonValue,
+    output: &mut Vec<PublicationBlock>,
+    pending_paragraph_gap: &mut bool,
+) {
+    let block = if node.get("type").and_then(JsonValue::as_str) == Some("paragraph") {
+        let Some(text) = PublicationRichText::from_node(node) else {
+            if !output.is_empty() {
+                *pending_paragraph_gap = true;
+            }
+            return;
+        };
+        Some(PublicationBlock::Paragraph(text))
+    } else {
+        block_from_node(node)
+    };
+
+    if let Some(block) = block {
+        if *pending_paragraph_gap {
+            output.push(PublicationBlock::ParagraphGap);
+            *pending_paragraph_gap = false;
         }
+        output.push(block);
     }
 }
 
@@ -2479,6 +3037,224 @@ fn evidence_image_from_node(node: &JsonValue) -> Option<PublicationBlock> {
         placement,
         figure_label: String::new(),
     })
+}
+
+fn guided_rows_block(
+    label: &str,
+    headers: &[String],
+    rows: &[BTreeMap<String, String>],
+) -> Option<PublicationBlock> {
+    let populated_rows = rows
+        .iter()
+        .filter_map(|row| {
+            let values = headers
+                .iter()
+                .map(|column| {
+                    row.get(column)
+                        .or_else(|| row.get(&section_key(column)))
+                        .map(|value| value.trim().to_owned())
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>();
+            values
+                .iter()
+                .any(|value| !value.is_empty())
+                .then_some(values)
+        })
+        .collect::<Vec<_>>();
+    if populated_rows.is_empty() {
+        return None;
+    }
+
+    let visible_columns = headers
+        .iter()
+        .enumerate()
+        .filter(|(index, header)| {
+            !header.trim().is_empty()
+                && populated_rows
+                    .iter()
+                    .any(|row| row.get(*index).is_some_and(|value| !value.is_empty()))
+        })
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    if visible_columns.is_empty() {
+        return None;
+    }
+
+    if visible_columns.len() <= MAX_COMPARABLE_TABLE_COLUMNS {
+        return Some(PublicationBlock::Table {
+            headers: visible_columns
+                .iter()
+                .map(|index| headers[*index].trim().to_owned())
+                .collect(),
+            rows: populated_rows
+                .iter()
+                .map(|row| {
+                    visible_columns
+                        .iter()
+                        .map(|index| row[*index].clone())
+                        .collect()
+                })
+                .collect(),
+        });
+    }
+
+    Some(PublicationBlock::StructuredRecords {
+        label: label.to_owned(),
+        records: populated_rows
+            .iter()
+            .map(|row| {
+                visible_columns
+                    .iter()
+                    .filter_map(|index| {
+                        let value = row[*index].trim();
+                        (!value.is_empty())
+                            .then(|| (headers[*index].trim().to_owned(), value.to_owned()))
+                    })
+                    .collect()
+            })
+            .collect(),
+    })
+}
+
+fn collect_evidence_references(
+    summaries: &mut Vec<EvidenceReferenceSummary>,
+    references: &[ProjectDataReference],
+    section_title: &str,
+) {
+    for reference in references
+        .iter()
+        .filter(|reference| reference.kind() == ProjectDataReferenceKind::Evidence)
+    {
+        if let Some(summary) = summaries
+            .iter_mut()
+            .find(|summary| summary.id == reference.id())
+        {
+            if !summary
+                .section_titles
+                .iter()
+                .any(|title| title == section_title)
+            {
+                summary.section_titles.push(section_title.to_owned());
+            }
+        } else {
+            summaries.push(EvidenceReferenceSummary {
+                id: reference.id(),
+                label: reference.label().to_owned(),
+                section_titles: vec![section_title.to_owned()],
+            });
+        }
+    }
+}
+
+fn collect_linked_row_evidence_references(
+    summaries: &mut Vec<EvidenceReferenceSummary>,
+    rows: &GuidedReportLinkedRows,
+    section_title: &str,
+) {
+    let references = rows
+        .references()
+        .iter()
+        .map(|reference| reference.reference().clone())
+        .collect::<Vec<_>>();
+    collect_evidence_references(summaries, &references, section_title);
+}
+
+fn collect_evidence_images(
+    summaries: &mut Vec<EvidenceReferenceSummary>,
+    sections: &[PublicationSection],
+) {
+    for section in sections {
+        for block in &section.blocks {
+            let PublicationBlock::EvidenceImage {
+                evidence_id,
+                alt,
+                title,
+                ..
+            } = block
+            else {
+                continue;
+            };
+            let label = title
+                .as_deref()
+                .filter(|title| !title.trim().is_empty())
+                .unwrap_or(alt)
+                .trim();
+            if let Some(summary) = summaries
+                .iter_mut()
+                .find(|summary| summary.id == *evidence_id)
+            {
+                if !summary
+                    .section_titles
+                    .iter()
+                    .any(|existing| existing == section.title())
+                {
+                    summary.section_titles.push(section.title().to_owned());
+                }
+                if summary.label.trim().is_empty() && !label.is_empty() {
+                    summary.label = label.to_owned();
+                }
+            } else {
+                summaries.push(EvidenceReferenceSummary {
+                    id: *evidence_id,
+                    label: label.to_owned(),
+                    section_titles: vec![section.title().to_owned()],
+                });
+            }
+        }
+    }
+}
+
+fn append_evidence_reference_index(
+    sections: &mut Vec<PublicationSection>,
+    references: Vec<EvidenceReferenceSummary>,
+) {
+    if references.is_empty() {
+        return;
+    }
+    let appendix_index = sections
+        .iter()
+        .position(|section| section.key == "evidence_appendix")
+        .unwrap_or_else(|| {
+            sections.push(PublicationSection::new(
+                "evidence_appendix",
+                "Evidence Appendix",
+            ));
+            sections.len().saturating_sub(1)
+        });
+    let appendix = &mut sections[appendix_index];
+    let heading = "Evidence index";
+    let items = references
+        .into_iter()
+        .map(|reference| EvidenceIndexItem {
+            evidence_id: reference.id,
+            label: reference.label,
+            section_titles: reference.section_titles,
+        })
+        .collect();
+    let list = PublicationBlock::EvidenceIndex { items };
+
+    if let Some(heading_index) = appendix
+        .blocks
+        .iter()
+        .position(|block| matches!(block, PublicationBlock::Subheading(text) if text == heading))
+    {
+        let insert_at = appendix
+            .blocks
+            .iter()
+            .enumerate()
+            .skip(heading_index.saturating_add(1))
+            .find_map(|(index, block)| {
+                matches!(block, PublicationBlock::Subheading(_)).then_some(index)
+            })
+            .unwrap_or(appendix.blocks.len());
+        appendix.blocks.insert(insert_at, list);
+    } else {
+        appendix
+            .blocks
+            .push(PublicationBlock::Subheading(heading.to_owned()));
+        appendix.blocks.push(list);
+    }
 }
 
 fn finalize_evidence_images(sections: &mut Vec<PublicationSection>) {
@@ -2548,6 +3324,50 @@ fn evidence_caption(alt: &str, title: Option<&str>) -> String {
 
 fn numbered_evidence_caption(figure_label: &str, alt: &str, title: Option<&str>) -> String {
     format!("Figure {figure_label}. {}", evidence_caption(alt, title))
+}
+
+fn evidence_index_title<'a>(
+    item: &'a EvidenceIndexItem,
+    assets: Option<&'a PublicationAssets>,
+) -> &'a str {
+    assets
+        .and_then(|assets| assets.evidence_metadata.get(&item.evidence_id))
+        .map(EvidenceFileMetadata::title)
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or(&item.label)
+}
+
+fn evidence_index_details(
+    item: &EvidenceIndexItem,
+    assets: Option<&PublicationAssets>,
+) -> Vec<(String, String)> {
+    let mut details = Vec::new();
+    if let Some(metadata) =
+        assets.and_then(|assets| assets.evidence_metadata.get(&item.evidence_id))
+    {
+        details.push(("Type".to_owned(), metadata.media_type().to_owned()));
+        if !metadata.description().trim().is_empty() {
+            details.push((
+                "Description".to_owned(),
+                metadata.description().trim().to_owned(),
+            ));
+        }
+        if !metadata.source().trim().is_empty() {
+            details.push(("Source".to_owned(), metadata.source().trim().to_owned()));
+        }
+        if let Some(captured_at) = metadata.captured_at() {
+            details.push(("Captured".to_owned(), captured_at.to_owned()));
+        }
+        details.push(("SHA-256".to_owned(), metadata.sha256().to_owned()));
+        if !metadata.analyst_notes().trim().is_empty() {
+            details.push((
+                "Analyst notes".to_owned(),
+                metadata.analyst_notes().trim().to_owned(),
+            ));
+        }
+    }
+    details.push(("Cited in".to_owned(), item.section_titles.join("; ")));
+    details
 }
 
 fn append_inline_spans(node: &JsonValue, spans: &mut Vec<PublicationInlineSpan>) {
@@ -2769,6 +3589,18 @@ mod tests {
             fit_image_dimensions(2_000_000, 1_000_000, 6_000_000, 8_000_000),
             (2_000_000, 1_000_000)
         );
+    }
+
+    #[test]
+    fn typst_template_renders_intentional_paragraph_gaps_as_fixed_space() {
+        assert!(TYPST_TEMPLATE.contains("item.kind == \"paragraph-gap\""));
+        assert!(TYPST_TEMPLATE.contains("block(height: 8pt)[]"));
+    }
+
+    #[test]
+    fn typst_cover_masthead_uses_saved_brand_name_without_a_fixed_product_label() {
+        assert!(TYPST_TEMPLATE.contains("upper(inputs.brand_name)"));
+        assert!(!TYPST_TEMPLATE.contains("INTELLIGENCE PRODUCT"));
     }
 
     #[test]

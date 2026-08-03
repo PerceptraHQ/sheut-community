@@ -26,7 +26,9 @@ const manifestCommands = new Set(
 const handlerBlock = rustEntryPoint.match(/generate_handler!\[([\s\S]*?)\]/)?.[1];
 if (!handlerBlock) throw new Error("Tauri invoke handler could not be inspected");
 const handlerCommands = new Set(
-  [...handlerBlock.matchAll(/(?:commands|graph)::([a-z][a-z0-9_]*)/g)].map((match) => match[1]),
+  [...handlerBlock.matchAll(/(?:commands|graph|telemetry)::([a-z][a-z0-9_]*)/g)].map(
+    (match) => match[1],
+  ),
 );
 const capabilityCommands = new Set(
   capability.permissions
@@ -274,6 +276,18 @@ for (const rejected of [
     },
   },
   {
+    cmd: "record_telemetry_event",
+    payload: {
+      eventName: "graph_opened",
+      reportTitle: "Project Nightfall",
+      reportSections: [{ title: "Assessment", prose: "Sensitive analysis" }],
+      graphNodes: [{ label: "Subject identity", properties: { account: "secret" } }],
+      graphEdges: [{ source: "person", target: "account" }],
+      evidence: { filename: "capture.png", analystNotes: "Sensitive evidence note" },
+      stixObjects: [{ type: "indicator", pattern: "[file:hashes = 'secret']" }],
+    },
+  },
+  {
     cmd: "create_technique_observation",
     payload: {
       projectId: crypto.randomUUID(),
@@ -340,6 +354,9 @@ function validPayload(command) {
   const backupId = crypto.randomUUID();
   const attachmentId = crypto.randomUUID();
   const payloads = {
+    get_telemetry_preference: {},
+    set_telemetry_preference: { enabled: false },
+    record_telemetry_event: { eventName: "graph_opened" },
     list_projects: {},
     list_graph_workspaces: { projectId, includeDeleted: false },
     list_graph_source_items: { projectId },
@@ -540,6 +557,7 @@ function validPayload(command) {
       title: "Quarterly threat report",
       fields: { report_title: { type: "text", value: "Quarterly threat report" } },
     },
+    get_guided_report_readiness: { projectId, reportId: documentId },
     update_guided_report_section_disposition: {
       projectId,
       reportId: documentId,

@@ -7,10 +7,10 @@ Sheut is pre-release software. Security fixes are applied to the current
 
 ## Report a vulnerability
 
-Use GitHub's **Report a vulnerability** button in the Security tab of
-`PerceptraHQ/sheut-community` to open a private security advisory. Do not
-report suspected vulnerabilities in public issues, discussions, pull requests,
-or social media.
+Use GitHub's [private vulnerability reporting
+form](https://github.com/PerceptraHQ/sheut-community/security/advisories/new) to
+open a private security advisory. Do not report suspected vulnerabilities in
+public issues, discussions, pull requests, or social media.
 
 Include only the minimum information needed to reproduce the issue:
 
@@ -24,10 +24,11 @@ Do not submit real threat intelligence, credentials, personal data, customer
 data, encryption keys, or live malware. Use synthetic fixtures and redact
 paths, database content, and identifiers.
 
-PerceptraHQ will acknowledge a valid report, coordinate remediation and
-disclosure in the private advisory, and credit reporters who want attribution.
-Security fixes, local encryption, recovery, and data portability are never
-restricted to a paid edition.
+PerceptraHQ aims to acknowledge reports within three business days and provide
+an initial assessment within seven calendar days. We will coordinate
+remediation and disclosure in the private advisory, and credit reporters who
+want attribution. Security fixes, local encryption, recovery, and data
+portability are never restricted to a paid edition.
 
 ## Scope priorities
 
@@ -41,4 +42,5 @@ High-priority areas include:
 - secret, project-content, or intelligence leakage; and
 - release artifact integrity and dependency compromise.
 
-The detailed design baseline lives in [`docs/security.md`](docs/security.md).
+Detailed internal security design material is not part of the public Community
+repository. This policy is the authoritative public reporting boundary.

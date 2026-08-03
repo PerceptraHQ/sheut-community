@@ -352,7 +352,7 @@ pub fn built_in_report_templates() -> Vec<ReportTemplateDefinition> {
 #[must_use]
 pub fn report_template_catalog() -> Vec<ReportTemplateDefinition> {
     let mut templates = built_in_report_templates();
-    templates.push(illicit_ecosystem_template_v3());
+    templates.push(illicit_ecosystem_template_v4());
     templates
 }
 
@@ -367,6 +367,7 @@ pub fn report_template_revision(
             illicit_ecosystem_template_v1(),
             illicit_ecosystem_template_v2(),
             illicit_ecosystem_template_v3(),
+            illicit_ecosystem_template_v4(),
         ])
         .find(|template| template.id() == template_id && template.revision() == revision)
 }
@@ -1468,6 +1469,67 @@ fn illicit_ecosystem_template_v3() -> ReportTemplateDefinition {
     .expect("illicit ecosystem report revision three is valid")
 }
 
+fn illicit_ecosystem_template_v4() -> ReportTemplateDefinition {
+    let previous = illicit_ecosystem_template_v3();
+    let id = previous.id;
+    let name = previous.name;
+    let mut sections = previous.sections;
+    let administration = sections
+        .iter_mut()
+        .find(|section| section.key == "report_administration")
+        .expect("revision three contains report administration");
+    administration.guidance = Some(
+        "Record accountable authorship, producing organisation, issue date, investigation scope and analytical confidence. The cover title, release version, handling marking and publication status are controlled by the report and immutable publication snapshot."
+            .to_owned(),
+    );
+    administration
+        .fields
+        .retain(|field| field.key != "report_status");
+    let authors = administration
+        .fields
+        .iter_mut()
+        .find(|field| field.key == "authors")
+        .expect("revision three contains authors");
+    authors.label = "Authors".to_owned();
+    authors.help_text = Some(
+        "List the people responsible for the analysis; do not combine the organisation name into this field."
+            .to_owned(),
+    );
+    let producing_organisation = administration
+        .fields
+        .iter_mut()
+        .find(|field| field.key == "producing_organization")
+        .expect("revision three contains producing organisation");
+    producing_organisation.help_text = Some(
+        "Name the accountable team or organisation separately from the individual authors."
+            .to_owned(),
+    );
+    let evidence_notes = sections
+        .iter_mut()
+        .find(|section| section.key == "evidence_appendix")
+        .and_then(|section| {
+            section
+                .fields
+                .iter_mut()
+                .find(|field| field.key == "evidence_notes")
+        })
+        .expect("revision three contains evidence notes");
+    evidence_notes.label = "Evidence analysis and explanatory figures".to_owned();
+    evidence_notes.help_text = Some(
+        "Explain what an extract, image or graph shows and how it supports the assessment. The automatic Evidence index separately records the linked project evidence."
+            .to_owned(),
+    );
+
+    ReportTemplateDefinition::new_custom(
+        id,
+        Revision::new(4).expect("illicit ecosystem revision is valid"),
+        &name,
+        "Assess complex illicit ecosystems with prose-first analysis, source-aware structured records and preserved evidence.",
+        sections,
+    )
+    .expect("illicit ecosystem report revision four is valid")
+}
+
 fn built_in_template(kind: BuiltinReportTemplate) -> ReportTemplateDefinition {
     let (id, name, description, sections) = match kind {
         BuiltinReportTemplate::ThreatActorProfile => (
@@ -2332,12 +2394,57 @@ impl ProjectDataReference {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GuidedReportRowReference {
+    row_index: usize,
+    column: String,
+    reference: ProjectDataReference,
+}
+
+impl GuidedReportRowReference {
+    #[must_use]
+    pub const fn row_index(&self) -> usize {
+        self.row_index
+    }
+
+    #[must_use]
+    pub fn column(&self) -> &str {
+        &self.column
+    }
+
+    #[must_use]
+    pub const fn reference(&self) -> &ProjectDataReference {
+        &self.reference
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GuidedReportLinkedRows {
+    rows: Vec<BTreeMap<String, String>>,
+    references: Vec<GuidedReportRowReference>,
+}
+
+impl GuidedReportLinkedRows {
+    #[must_use]
+    pub fn rows(&self) -> &[BTreeMap<String, String>] {
+        &self.rows
+    }
+
+    #[must_use]
+    pub fn references(&self) -> &[GuidedReportRowReference] {
+        &self.references
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum GuidedReportFieldValue {
     Text(String),
     Narrative(Value),
     Rows(Vec<BTreeMap<String, String>>),
+    LinkedRows(GuidedReportLinkedRows),
     ProjectReferences(Vec<ProjectDataReference>),
 }
 
@@ -2350,12 +2457,18 @@ pub enum ReportSectionDisposition {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ReportValidationIssue {
+pub struct ReportReadinessWarning {
+    section_key: String,
     field_key: String,
     message: String,
 }
 
-impl ReportValidationIssue {
+impl ReportReadinessWarning {
+    #[must_use]
+    pub fn section_key(&self) -> &str {
+        &self.section_key
+    }
+
     #[must_use]
     pub fn field_key(&self) -> &str {
         &self.field_key
@@ -2647,8 +2760,8 @@ impl GuidedReport {
             || self.template_revision != source_template.revision
             || source_template.id != target_template.id
             || source_template.id.to_string() != ILLICIT_ECOSYSTEM_TEMPLATE_ID
-            || !matches!(source_template.revision.get(), 1 | 2)
-            || target_template.revision.get() != 3
+            || !matches!(source_template.revision.get(), 1..=3)
+            || target_template.revision.get() != 4
             || now_unix_ms < self.updated_at_unix_ms
         {
             return Err(DomainError::new(DomainErrorCode::InvalidGuidedReport));
@@ -2704,6 +2817,16 @@ impl GuidedReport {
                     GuidedReportFieldValue::Rows(migrate_legacy_rows(
                         source_key,
                         rows,
+                        &target_field.columns,
+                        &mut legacy_metadata,
+                    ))
+                }
+                GuidedReportFieldValue::LinkedRows(rows)
+                    if target_field.kind == ReportFieldKind::RepeatableRows =>
+                {
+                    GuidedReportFieldValue::Rows(migrate_legacy_rows(
+                        source_key,
+                        rows.rows(),
                         &target_field.columns,
                         &mut legacy_metadata,
                     ))
@@ -2805,19 +2928,31 @@ impl GuidedReport {
             .iter()
             .map(|section| section.key.clone())
             .collect();
-        upgraded.section_dispositions.clear();
+        upgraded.section_dispositions = self
+            .section_dispositions
+            .iter()
+            .filter_map(|(source_key, disposition)| {
+                let target_key = legacy_section_key(source_key);
+                target_template
+                    .sections
+                    .iter()
+                    .any(|section| section.key == target_key && section.optional)
+                    .then(|| (target_key.to_owned(), *disposition))
+            })
+            .collect();
         upgraded.fields = upgraded_fields;
         upgraded.updated_at_unix_ms = now_unix_ms;
         Ok(upgraded)
     }
 
     #[must_use]
-    pub fn validate_for_publication(
+    pub fn readiness_warnings(
         &self,
         template: &ReportTemplateDefinition,
-    ) -> Vec<ReportValidationIssue> {
+    ) -> Vec<ReportReadinessWarning> {
         if self.template_id != template.id || self.template_revision != template.revision {
-            return vec![ReportValidationIssue {
+            return vec![ReportReadinessWarning {
+                section_key: "template".to_owned(),
                 field_key: "template".to_owned(),
                 message: "The report template revision is unavailable.".to_owned(),
             }];
@@ -2830,17 +2965,23 @@ impl GuidedReport {
             .filter(|section| {
                 self.section_disposition(&section.key) == ReportSectionDisposition::Active
             })
-            .flat_map(|section| section.fields.iter())
-            .filter(|field| field.required)
-            .filter_map(|field| {
+            .flat_map(|section| {
+                section
+                    .fields
+                    .iter()
+                    .filter(|field| field.required)
+                    .map(move |field| (section, field))
+            })
+            .filter_map(|(section, field)| {
                 self.fields
                     .get(&field.key)
                     .filter(|value| value_matches_kind(value, field.kind) && !value_is_empty(value))
                     .map(|_| None)
                     .unwrap_or_else(|| {
-                        Some(ReportValidationIssue {
+                        Some(ReportReadinessWarning {
+                            section_key: section.key.clone(),
                             field_key: field.key.clone(),
-                            message: format!("{} is required.", field.label),
+                            message: format!("Add recommended content to {}.", field.label),
                         })
                     })
             })
@@ -2908,6 +3049,15 @@ impl GuidedReport {
     #[must_use]
     pub const fn deleted_at_unix_ms(&self) -> Option<i64> {
         self.deleted_at_unix_ms
+    }
+}
+
+fn legacy_section_key(source_key: &str) -> &str {
+    match source_key {
+        "identities" => "identities_roles",
+        "media_evidence" => "media_file_evidence",
+        "relationships_evidence" => "relationships_supporting_evidence",
+        _ => source_key,
     }
 }
 
@@ -3057,6 +3207,19 @@ fn preserve_legacy_value(
                 }
             }
         }
+        GuidedReportFieldValue::LinkedRows(rows) => {
+            for (row_index, row) in rows.rows().iter().enumerate() {
+                for (column, value) in row.iter().filter(|(_, value)| !value.trim().is_empty()) {
+                    legacy_metadata.push(BTreeMap::from([
+                        (
+                            "Label".to_owned(),
+                            format!("Legacy {field_key} row {}: {column}", row_index + 1),
+                        ),
+                        ("Value".to_owned(), value.trim().to_owned()),
+                    ]));
+                }
+            }
+        }
         GuidedReportFieldValue::Narrative(_) | GuidedReportFieldValue::ProjectReferences(_) => {
             return Err(DomainError::new(DomainErrorCode::InvalidGuidedReport));
         }
@@ -3087,31 +3250,59 @@ fn validate_field_value(value: &GuidedReportFieldValue) -> Result<(), DomainErro
             }
         }
         GuidedReportFieldValue::Narrative(root) => super::validate_document_root(root)?,
-        GuidedReportFieldValue::Rows(rows) => {
-            if rows.len() > MAX_REPEATABLE_ROWS {
-                return Err(DomainError::new(code));
-            }
-            for row in rows {
-                if row.len() > 32
-                    || row.iter().any(|(key, value)| {
-                        bounded_text(key, 80, code).is_err()
-                            || value.chars().count() > MAX_FIELD_TEXT_CHARS
-                            || value.chars().any(|character| character == '\0')
-                    })
-                {
-                    return Err(DomainError::new(code));
-                }
-            }
+        GuidedReportFieldValue::Rows(rows) => validate_rows(rows, &[], code)?,
+        GuidedReportFieldValue::LinkedRows(linked) => {
+            validate_rows(linked.rows(), linked.references(), code)?;
         }
         GuidedReportFieldValue::ProjectReferences(references) => {
-            if references.len() > MAX_INCLUDED_ITEMS
-                || references
-                    .iter()
-                    .any(|reference| bounded_text(&reference.label, 200, code).is_err())
-            {
-                return Err(DomainError::new(code));
-            }
+            validate_project_references(references, code)?;
         }
+    }
+    Ok(())
+}
+
+fn validate_rows(
+    rows: &[BTreeMap<String, String>],
+    references: &[GuidedReportRowReference],
+    code: DomainErrorCode,
+) -> Result<(), DomainError> {
+    if rows.len() > MAX_REPEATABLE_ROWS {
+        return Err(DomainError::new(code));
+    }
+    for row in rows {
+        if row.len() > 32
+            || row.iter().any(|(key, value)| {
+                bounded_text(key, 80, code).is_err()
+                    || value.chars().count() > MAX_FIELD_TEXT_CHARS
+                    || value.chars().any(|character| character == '\0')
+            })
+        {
+            return Err(DomainError::new(code));
+        }
+    }
+    if references.len() > MAX_INCLUDED_ITEMS
+        || references.iter().any(|reference| {
+            reference.row_index >= rows.len()
+                || !rows[reference.row_index].contains_key(&reference.column)
+                || bounded_text(&reference.column, 80, code).is_err()
+                || bounded_text(&reference.reference.label, 200, code).is_err()
+        })
+    {
+        return Err(DomainError::new(code));
+    }
+    Ok(())
+}
+
+fn validate_project_references(
+    references: &[ProjectDataReference],
+    code: DomainErrorCode,
+) -> Result<(), DomainError> {
+    if references.len() > MAX_INCLUDED_ITEMS
+        || references
+            .iter()
+            .any(|reference| bounded_text(&reference.label, 200, code).is_err())
+    {
+        return Err(DomainError::new(code));
     }
     Ok(())
 }
@@ -3120,12 +3311,34 @@ fn validate_value_for_template_field(
     value: &GuidedReportFieldValue,
     field: &ReportTemplateField,
 ) -> Result<(), DomainError> {
-    if let GuidedReportFieldValue::Rows(rows) = value {
+    if field.kind == ReportFieldKind::Date
+        && let GuidedReportFieldValue::Text(value) = value
+        && !value.trim().is_empty()
+        && !is_calendar_date(value)
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidGuidedReport));
+    }
+    if field.kind == ReportFieldKind::Confidence
+        && let GuidedReportFieldValue::Text(value) = value
+        && !value.trim().is_empty()
+        && !matches!(value.as_str(), "low" | "moderate" | "high")
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidGuidedReport));
+    }
+    if let Some(rows) = guided_report_rows(value) {
         let allowed_columns = field.columns.iter().collect::<HashSet<_>>();
         if rows
             .iter()
             .flat_map(BTreeMap::keys)
             .any(|column| !allowed_columns.contains(column))
+        {
+            return Err(DomainError::new(DomainErrorCode::InvalidGuidedReport));
+        }
+        if let GuidedReportFieldValue::LinkedRows(linked) = value
+            && linked
+                .references()
+                .iter()
+                .any(|reference| !allowed_columns.contains(&reference.column))
         {
             return Err(DomainError::new(DomainErrorCode::InvalidGuidedReport));
         }
@@ -3157,6 +3370,9 @@ fn value_matches_kind(value: &GuidedReportFieldValue, kind: ReportFieldKind) -> 
             GuidedReportFieldValue::Rows(_),
             ReportFieldKind::RepeatableRows
         ) | (
+            GuidedReportFieldValue::LinkedRows(_),
+            ReportFieldKind::RepeatableRows
+        ) | (
             GuidedReportFieldValue::ProjectReferences(_),
             ReportFieldKind::ProjectReferences
         )
@@ -3170,7 +3386,19 @@ fn value_is_empty(value: &GuidedReportFieldValue) -> bool {
         GuidedReportFieldValue::Rows(rows) => rows
             .iter()
             .all(|row| row.values().all(|cell| cell.trim().is_empty())),
+        GuidedReportFieldValue::LinkedRows(rows) => rows
+            .rows()
+            .iter()
+            .all(|row| row.values().all(|cell| cell.trim().is_empty())),
         GuidedReportFieldValue::ProjectReferences(references) => references.is_empty(),
+    }
+}
+
+fn guided_report_rows(value: &GuidedReportFieldValue) -> Option<&[BTreeMap<String, String>]> {
+    match value {
+        GuidedReportFieldValue::Rows(rows) => Some(rows),
+        GuidedReportFieldValue::LinkedRows(rows) => Some(rows.rows()),
+        _ => None,
     }
 }
 

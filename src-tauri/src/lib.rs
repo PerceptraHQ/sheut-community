@@ -9,12 +9,14 @@ mod commands;
 mod desktop_menu;
 mod export;
 mod graph;
+mod telemetry;
 
 pub fn run() {
     let application = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             commands::initialize(app)?;
+            telemetry::initialize(app)?;
             desktop_menu::install(app)?;
             Ok(())
         })
@@ -77,6 +79,7 @@ pub fn run() {
             commands::list_report_project_data,
             commands::create_guided_report,
             commands::save_guided_report,
+            commands::get_guided_report_readiness,
             commands::update_guided_report_section_disposition,
             commands::upgrade_illicit_ecosystem_report,
             commands::delete_guided_report,
@@ -115,6 +118,9 @@ pub fn run() {
             commands::delete_project,
             commands::restore_device_project_backup,
             commands::restore_passphrase_project_backup,
+            telemetry::get_telemetry_preference,
+            telemetry::set_telemetry_preference,
+            telemetry::record_telemetry_event,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -49,6 +49,29 @@ describe("SettingsWorkspace", () => {
     ).toBeVisible();
   });
 
+  it("shows the exact telemetry boundary and supports immediate opt-out", async () => {
+    const user = userEvent.setup();
+    const onTelemetryPreferenceChange = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SettingsWorkspace
+        layout={DEFAULT_WORKBENCH_LAYOUT}
+        onLayoutChange={vi.fn()}
+        telemetryConsent="enabled"
+        onTelemetryPreferenceChange={onTelemetryPreferenceChange}
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Data & security" }));
+    const telemetry = screen.getByRole("switch", { name: "Anonymous diagnostics and usage" });
+    expect(telemetry).toBeChecked();
+    expect(
+      screen.getByText(/graph data; report titles, sections, fields, rows, or prose/i),
+    ).toBeVisible();
+
+    await user.click(telemetry);
+    expect(onTelemetryPreferenceChange).toHaveBeenCalledWith(false);
+  });
+
   it("exposes project-local Brand Studio only when a project is open", async () => {
     const user = userEvent.setup();
     render(
@@ -103,5 +126,8 @@ describe("SettingsWorkspace", () => {
       screen.getAllByText(/Create in Intelligence as Domain Name or URL/i).length,
     ).toBeGreaterThan(0);
     expect(screen.getByText(/Do not create one STIX object per cell/i)).toBeVisible();
+    expect(screen.getByText(/Start each section in the narrative canvas/i)).toBeVisible();
+    expect(screen.getByText(/readiness recommendations are advisory/i)).toBeVisible();
+    expect(screen.queryByText("Report status")).not.toBeInTheDocument();
   });
 });

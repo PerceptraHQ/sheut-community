@@ -15,9 +15,10 @@ function BrokenWorkspace(): never {
 describe("WorkspaceErrorBoundary", () => {
   it("keeps recovery controls visible when a workspace crashes", async () => {
     const onLeave = vi.fn();
+    const onReport = vi.fn();
     const user = userEvent.setup();
     render(
-      <WorkspaceErrorBoundary onLeave={onLeave}>
+      <WorkspaceErrorBoundary onLeave={onLeave} onReport={onReport}>
         <BrokenWorkspace />
       </WorkspaceErrorBoundary>,
     );
@@ -27,6 +28,7 @@ describe("WorkspaceErrorBoundary", () => {
     expect(screen.getByText(/^Diagnostic [A-F0-9]{8}$/u)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Return to project overview" }));
     expect(onLeave).toHaveBeenCalledOnce();
+    expect(onReport).toHaveBeenCalledWith("workspace_render_failed");
   });
 
   it("redacts local identifiers and paths from visible diagnostics", () => {

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://telemetry.perceptrahq.com/schemas/telemetry-event-v1.schema.json",
+  "title": "Sheut anonymous diagnostics and usage event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "installationId",
+    "occurredAtUnixMs",
+    "appVersion",
+    "operatingSystem",
+    "architecture",
+    "eventName"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "eventId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "installationId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "occurredAtUnixMs": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "appVersion": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32,
+      "pattern": "^[0-9A-Za-z.+-]+$"
+    },
+    "operatingSystem": {
+      "enum": ["linux", "macos", "windows"]
+    },
+    "architecture": {
+      "enum": ["aarch64", "arm", "x86", "x86_64"]
+    },
+    "eventName": {
+      "enum": [
+        "application_started",
+        "project_created",
+        "project_unlocked",
+        "backup_created",
+        "recovery_point_restored",
+        "investigations_opened",
+        "intelligence_opened",
+        "evidence_opened",
+        "graph_opened",
+        "mitre_opened",
+        "settings_opened",
+        "stix_import_completed",
+        "stix_export_completed",
+        "evidence_import_completed",
+        "publication_completed",
+        "project_list_failed",
+        "webview_unhandled_error",
+        "webview_unhandled_rejection",
+        "workspace_render_failed"
+      ]
+    }
+  }
+}

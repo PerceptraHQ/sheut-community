@@ -348,13 +348,9 @@ const illicitEcosystemFieldExamples: readonly ReportHelpFieldExample[] = [
   },
   {
     field: "Producing organisation",
-    guidance: "Name the accountable team when it is not already clear from the author entry.",
+    guidance:
+      "Name the accountable team or organisation separately from the people who authored the report.",
     example: "Digital Risk Intelligence Unit",
-  },
-  {
-    field: "Report status",
-    guidance: "Choose the current analytical lifecycle state.",
-    example: "For review",
   },
   {
     field: "Investigation period",
@@ -560,7 +556,7 @@ export const REPORT_HELP_TOPICS: readonly ReportHelpTopic[] = [
       "Set the actor or cluster name, report date, authors, version, and TLP marking.",
       "Summarize the assessment and key judgments before adding detailed behavior and infrastructure.",
       "Insert human-readable STIX objects and MITRE ATT&CK techniques from project data where they support the narrative.",
-      "Add evidence references and publish only after required fields pass validation.",
+      "Add evidence references, review readiness recommendations, and decide whether the draft is ready to publish.",
     ],
     fieldGuidance: [
       "Separate confirmed identity from aliases, vendor names, and internal cluster labels.",
@@ -787,10 +783,10 @@ export const REPORT_HELP_TOPICS: readonly ReportHelpTopic[] = [
     useWhen:
       "Use this template for a one-off structured deliverable, or as the starting point for a project-local custom report template.",
     workflow: [
-      "Set a precise report title and the required cover metadata.",
+      "Set a precise report title, then begin with the primary narrative in each section.",
       "Add the narrative and table content needed by the audience.",
       "Use project-data insertion only in fields where the referenced object supports the report.",
-      "Validate, save the draft, and publish through the same branded pipeline as other reports.",
+      "Review advisory readiness guidance, save the draft, and publish through the same branded pipeline as other reports.",
     ],
     fieldGuidance: [
       "Prefer an existing template when its semantics match the report.",
@@ -840,18 +836,22 @@ export const REPORT_HELP_TOPICS: readonly ReportHelpTopic[] = [
     useWhen:
       "Use this template when repeatable entity inventories and relationships are central to the investigation, especially for piracy networks and delivery ecosystems.",
     workflow: [
-      "Complete Report Administration, Executive Summary, Key Findings, methodology, the core Assessment, and Recommended Actions.",
+      "Start each section in the narrative canvas. Use Edit details for compact metadata and Add to section for optional narratives, records, or project references.",
       "Turn unanswered questions into linked intelligence gaps and requirements, then build the timeline and ecosystem overview.",
-      "Fill identity, social-profile, site, infrastructure, certificate, relationship, media, and observable tables with reader-facing values.",
+      "Add identity, social-profile, site, infrastructure, certificate, relationship, media, and observable records one at a time; Cancel leaves the report unchanged.",
       "Insert existing STIX objects, ATT&CK observations, and encrypted Evidence where they add reusable project context; leave unsupported optional sections empty.",
-      "Publish with the release version and TLP handling marking. Empty content disappears from the output and table of contents.",
+      "Evidence selected in a structured record or inserted as an image is indexed once under Evidence index, with source metadata, analyst notes, citing sections, and the image itself when applicable.",
+      "Review Empty, In progress, Ready, and Not applicable states, then publish with the release version and TLP handling marking. Empty content disappears from the output and table of contents.",
     ],
     fieldGuidance: [
-      "Administration: Sheut generates the project-local Report ID; the editor stores report date, authors or producing organisation, lifecycle status, investigation period, confidence, geography, project references, and scope; Publish supplies version and handling marking.",
-      "Methodology: distinguish source reporting, independent corroboration, technical observations, evidence preservation, limitations, and confidence definitions.",
-      "Analysis: do not merge an alleged identity with an OSINT match, or a recommended financial inquiry with a current finding.",
+      "Administration: Sheut generates the project-local Report ID; authors are people and Producing organisation is the accountable team. The cover and publication snapshot control title, release version, TLP marking, and publication status.",
+      "Methodology: distinguish facts, source reporting, independent corroboration, technical observations, evidence preservation, limitations, and confidence definitions.",
+      "Analysis: keep assessment, intelligence gaps, requirements, and recommendations distinct. Do not merge an alleged identity with an OSINT match or a recommended financial inquiry with a current finding.",
       "Relationships: state source, relationship, target, basis, confidence, corroboration, and evidence. Graph links remain visual unless explicitly validated as STIX relationships.",
-      "ATT&CK and detections are conditional. Leave them empty unless the behavior or rule is defensible; no empty heading is published.",
+      "Evidence appendix: use Evidence analysis and explanatory figures for analyst-authored context, image captions, or an exported STIX graph view. The graph explains the model but does not prove a relationship; cite the supporting Evidence separately.",
+      "Publication: empty structured columns disappear; short comparable records remain tables, while dense intelligence records become readable labelled cards instead of tiny wide tables.",
+      "ATT&CK and detections are conditional and may be marked Not applicable. Leave them empty unless the behavior or rule is defensible; no empty heading is published.",
+      "Readiness recommendations are advisory. Publishing lists missing recommended content for confirmation, while malformed supplied values and an empty title remain hard errors.",
     ],
     fieldExamples: illicitEcosystemFieldExamples,
   },

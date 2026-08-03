@@ -63,10 +63,20 @@ export interface ProjectDataSelection extends ProjectDataReference {
   values: Record<string, string>;
 }
 
+export interface GuidedReportRowReference {
+  rowIndex: number;
+  column: string;
+  reference: ProjectDataReference;
+}
+
 export type GuidedReportFieldValue =
   | { type: "text"; value: string }
   | { type: "narrative"; value: DocumentRoot }
   | { type: "rows"; value: Array<Record<string, string>> }
+  | {
+      type: "linked_rows";
+      value: { rows: Array<Record<string, string>>; references: GuidedReportRowReference[] };
+    }
   | { type: "project_references"; value: ProjectDataReference[] };
 
 export interface GuidedReport {
@@ -85,6 +95,12 @@ export interface GuidedReport {
 }
 
 export type ReportSectionDisposition = "active" | "not_applicable";
+
+export interface ReportReadinessWarning {
+  section_key: string;
+  field_key: string;
+  message: string;
+}
 
 export interface EvidenceFileMetadata {
   id: string;
@@ -159,6 +175,16 @@ export function saveGuidedReport(
     expectedRevision,
     title,
     fields,
+  });
+}
+
+export function getGuidedReportReadiness(
+  projectId: string,
+  reportId: string,
+): Promise<ReportReadinessWarning[]> {
+  return invoke<ReportReadinessWarning[]>("get_guided_report_readiness", {
+    projectId,
+    reportId,
   });
 }
 
