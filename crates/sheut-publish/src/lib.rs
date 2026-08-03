@@ -780,22 +780,20 @@ impl PublicationIr {
                         }
                     }
                     GuidedReportFieldValue::ProjectReferences(references)
-                        if !references.is_empty() =>
+                        if !references.is_empty() && definition.key() != "evidence_appendix" =>
                     {
-                        if definition.key() != "evidence_appendix" {
-                            section.blocks.push(PublicationBlock::ReferenceList {
-                                label: Some(field.label().to_owned()),
-                                items: references
-                                    .iter()
-                                    .map(|reference| {
-                                        (
-                                            reference.label().to_owned(),
-                                            reference_kind_label(reference.kind()).to_owned(),
-                                        )
-                                    })
-                                    .collect(),
-                            });
-                        }
+                        section.blocks.push(PublicationBlock::ReferenceList {
+                            label: Some(field.label().to_owned()),
+                            items: references
+                                .iter()
+                                .map(|reference| {
+                                    (
+                                        reference.label().to_owned(),
+                                        reference_kind_label(reference.kind()).to_owned(),
+                                    )
+                                })
+                                .collect(),
+                        });
                     }
                     _ => {}
                 }
@@ -1668,7 +1666,7 @@ fn render_html_block(
             output.push_str("<div class=\"evidence-index\">");
             for item in items {
                 output.push_str("<article class=\"evidence-index-item\"><h4>");
-                output.push_str(&escape_html(&evidence_index_title(item, assets)));
+                output.push_str(&escape_html(evidence_index_title(item, assets)));
                 output.push_str("</h4><dl>");
                 for (label, value) in evidence_index_details(item, assets) {
                     output.push_str("<dt>");
@@ -1687,9 +1685,9 @@ fn render_html_block(
                     output.push_str(";base64,");
                     output.push_str(&BASE64_STANDARD.encode(bytes));
                     output.push_str("\" alt=\"");
-                    output.push_str(&escape_html(&evidence_index_title(item, assets)));
+                    output.push_str(&escape_html(evidence_index_title(item, assets)));
                     output.push_str("\"><figcaption>Evidence image — ");
-                    output.push_str(&escape_html(&evidence_index_title(item, assets)));
+                    output.push_str(&escape_html(evidence_index_title(item, assets)));
                     output.push_str("</figcaption></figure>");
                 }
                 output.push_str("</article>");
