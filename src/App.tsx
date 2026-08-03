@@ -137,8 +137,9 @@ function Workbench() {
     secondarySideBarPosition: "right",
     secondarySideBarVisible: true,
   });
-  const [telemetryPreference, setTelemetryPreferenceState] =
-    useState<TelemetryPreference | null>(null);
+  const [telemetryPreference, setTelemetryPreferenceState] = useState<TelemetryPreference | null>(
+    null,
+  );
   const applicationStartedReported = useRef(false);
   const panelStateBeforeGraphFocus = useRef({ explorer: false, inspector: false });
   const explorerCollapsedRef = useRef(explorerCollapsed);

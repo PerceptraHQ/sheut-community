@@ -1,10 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  getTelemetryPreference,
-  recordTelemetryEvent,
-  setTelemetryPreference,
-} from "./telemetry";
+import { getTelemetryPreference, recordTelemetryEvent, setTelemetryPreference } from "./telemetry";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 

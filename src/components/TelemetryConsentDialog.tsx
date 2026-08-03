@@ -38,7 +38,10 @@ export function TelemetryConsentDialog({ onDecision }: TelemetryConsentDialogPro
 
         <div className="grid gap-4 p-5 text-xs">
           <section aria-labelledby="telemetry-collected-title">
-            <h2 className="m-0 text-copy-primary text-xs font-semibold" id="telemetry-collected-title">
+            <h2
+              className="m-0 text-copy-primary text-xs font-semibold"
+              id="telemetry-collected-title"
+            >
               Collected after opt-in
             </h2>
             <p className="mt-1 mb-0 text-copy-muted leading-5">
@@ -55,9 +58,10 @@ export function TelemetryConsentDialog({ onDecision }: TelemetryConsentDialogPro
               Never collected
             </h2>
             <p className="mt-1 mb-0 text-copy-muted leading-5">
-              Project names or identifiers; graph nodes, edges, labels, or properties; report titles,
-              sections, fields, rows, or prose; STIX objects; evidence metadata or files; analyst
-              notes; attachments; searches; paths; URLs; error messages; credentials; or identity.
+              Project names or identifiers; graph nodes, edges, labels, or properties; report
+              titles, sections, fields, rows, or prose; STIX objects; evidence metadata or files;
+              analyst notes; attachments; searches; paths; URLs; error messages; credentials; or
+              identity.
             </p>
           </section>
           <p className="m-0 text-copy-faint text-[11px] leading-5">

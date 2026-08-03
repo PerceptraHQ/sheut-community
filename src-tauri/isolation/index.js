@@ -351,8 +351,7 @@
     isPassphrase(payload.passphrase);
 
   const validators = Object.freeze({
-    get_telemetry_preference: (payload) =>
-      isRecord(payload) && Object.keys(payload).length === 0,
+    get_telemetry_preference: (payload) => isRecord(payload) && Object.keys(payload).length === 0,
     set_telemetry_preference: (payload) =>
       isRecord(payload) &&
       Object.keys(payload).length === 1 &&
