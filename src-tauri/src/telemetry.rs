@@ -5,8 +5,7 @@
 //! network delivery. Project values never enter this module's public commands.
 
 use std::{
-    fs,
-    io,
+    fs, io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -182,8 +181,7 @@ pub(super) async fn set_telemetry_preference(
     let settings_path = state.settings_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let next = TelemetrySettings::from_decision(enabled);
-        persist_settings(&settings_path, &next)
-            .map_err(|_| CommandError::storage_unavailable())?;
+        persist_settings(&settings_path, &next).map_err(|_| CommandError::storage_unavailable())?;
         let preference = TelemetryPreference::from(&next);
         *settings
             .lock()
@@ -271,7 +269,10 @@ fn load_settings(path: &Path) -> TelemetrySettings {
 
 fn persist_settings(path: &Path, settings: &TelemetrySettings) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidInput, "telemetry settings path has no parent")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "telemetry settings path has no parent",
+        )
     })?;
     fs::create_dir_all(parent)?;
     let bytes = serde_json::to_vec(settings)
