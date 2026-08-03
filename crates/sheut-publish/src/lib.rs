@@ -151,6 +151,7 @@ const TYPST_TEMPLATE: &str = r##"
 #let paper = rgb(inputs.background_color)
 #let rule = rgb("#B8C2CC")
 #let band = rgb(inputs.band_color)
+#let muted = rgb(75, 85, 99)
 #let tlp-fg = rgb(inputs.tlp_foreground)
 #let tlp-bg = rgb(inputs.tlp_background)
 #let report-number = if inputs.report_number == "" { "DRAFT" } else { inputs.report_number }
@@ -313,7 +314,7 @@ const TYPST_TEMPLATE: &str = r##"
           stroke: (left: 2pt + secondary),
         )[
           #text(font: inputs.heading_font, size: 8.5pt, weight: 700, reference.title) \
-          #text(font: inputs.body_font, size: 8pt, fill: rgb("#4B5563"), reference.detail)
+          #text(font: inputs.body_font, size: 8pt, fill: muted, reference.detail)
         ]
       }
     ]
@@ -357,7 +358,7 @@ const TYPST_TEMPLATE: &str = r##"
                 font: inputs.body_font,
                 size: 7.5pt,
                 style: "italic",
-                fill: rgb("#4B5563"),
+                fill: muted,
                 "Evidence image — " + entry.title,
               )
             ]
@@ -376,7 +377,7 @@ const TYPST_TEMPLATE: &str = r##"
           alt: item.alt,
         )
         #v(3pt)
-        #text(font: inputs.body_font, size: 7.5pt, style: "italic", fill: rgb("#4B5563"), item.caption)
+        #text(font: inputs.body_font, size: 7.5pt, style: "italic", fill: muted, item.caption)
       ]
     ]
   }
