@@ -15,6 +15,8 @@ jobs:
     name: Unverified ${{ matrix.label }} preview
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    env:
+      SHEUT_TELEMETRY_ENDPOINT: https://telemetry-api-production-f7f4.up.railway.app/v1/events
     strategy:
       fail-fast: false
       matrix:
