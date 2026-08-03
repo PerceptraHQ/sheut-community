@@ -15,7 +15,6 @@ import type { CreateProjectRequest } from "./components/CreateProjectDialog";
 import { ProjectExplorer } from "./components/ProjectExplorer";
 import { ProjectLauncher } from "./components/ProjectLauncher";
 import type { SettingsSectionId } from "./components/SettingsWorkspace";
-import { TelemetryConsentDialog } from "./components/TelemetryConsentDialog";
 import { useVaultNotices, VaultNoticeProvider } from "./components/VaultNotices";
 import { WorkspaceErrorBoundary } from "./components/WorkspaceErrorBoundary";
 import { WorkspaceLoadingState } from "./components/WorkspaceState";
@@ -86,6 +85,9 @@ const ProjectCommandPalette = lazy(async () => ({
 }));
 const SettingsWorkspace = lazy(async () => ({
   default: (await import("./components/SettingsWorkspace")).SettingsWorkspace,
+}));
+const TelemetryConsentDialog = lazy(async () => ({
+  default: (await import("./components/TelemetryConsentDialog")).TelemetryConsentDialog,
 }));
 
 type WorkspaceView = SearchDestination;
@@ -844,7 +846,9 @@ function Workbench() {
         </Suspense>
       ) : null}
       {telemetryPreference?.consent === "unknown" ? (
-        <TelemetryConsentDialog onDecision={handleTelemetryPreferenceChange} />
+        <Suspense fallback={null}>
+          <TelemetryConsentDialog onDecision={handleTelemetryPreferenceChange} />
+        </Suspense>
       ) : null}
     </div>
   );
