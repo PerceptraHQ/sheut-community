@@ -31,7 +31,7 @@ typst-pdf = "=0.15.1"
 docx-rs = "=0.4.22"
 rfd = "=0.17.2"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
-base64 = "=0.22.1"
+base64 = "=0.23.0"
 rstix = { version = "=0.20.0", default-features = false, features = ["validate"] }
 
 [patch.crates-io]
