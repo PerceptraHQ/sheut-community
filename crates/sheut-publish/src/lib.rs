@@ -3597,6 +3597,12 @@ mod tests {
     }
 
     #[test]
+    fn typst_cover_masthead_uses_saved_brand_name_without_a_fixed_product_label() {
+        assert!(TYPST_TEMPLATE.contains("upper(inputs.brand_name)"));
+        assert!(!TYPST_TEMPLATE.contains("INTELLIGENCE PRODUCT"));
+    }
+
+    #[test]
     fn fixed_typst_template_compiles_with_typed_inputs() {
         let profile = BrandProfile::project_default(
             LocalId::parse("110b83fb-9fdb-4133-a29b-e75725bb6d0c").unwrap(),
