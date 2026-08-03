@@ -14,7 +14,7 @@ Relationship, and a visual Graph link is never silently converted into one.
 | Executive Summary | BLUF: threat, impact, significance, and action for the recipient |
 | Key Findings | Principal supported intelligence judgments |
 | Assessment | Analytical reasoning, assumptions, alternatives, and implications |
-| Key Intelligence Gaps | Material unknowns that prevent stronger judgments |
+| Intelligence Gaps | Material unknowns that prevent stronger judgments |
 | Intelligence Requirements | Answerable questions for further collection |
 | Recommended Actions | Preservation, investigative, defensive, or collection steps |
 
@@ -177,7 +177,7 @@ Keep an employment match, identity claim, or financial hypothesis separate
 from a proven identity or transaction. Explain the alternative explanation that
 would most seriously weaken the assessment.
 
-### Key Intelligence Gaps
+### Intelligence Gaps
 
 Each row contains **Gap ID**, **Unknown**, **Why it matters**, **Status**, and
 **Related finding**. Example: `GAP-01 | Whether the named person and the public

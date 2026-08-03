@@ -404,7 +404,7 @@ export function GuidedReportEditor({
         })}
       </nav>
 
-      <article className="grid min-w-0 gap-5">
+      <article className="grid min-w-0 content-start gap-5">
         {onUpgrade && latestTemplateRevision && latestTemplateRevision > template.revision ? (
           <section className="flex flex-wrap items-center justify-between gap-3 rounded-sm border border-accent/40 bg-panel-raised px-4 py-3">
             <div>

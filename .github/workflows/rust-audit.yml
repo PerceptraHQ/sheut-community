@@ -3,10 +3,6 @@ name: Rust dependency audit
 on:
   pull_request:
     branches: [main]
-    paths:
-      - "**/Cargo.toml"
-      - Cargo.lock
-      - .github/workflows/rust-audit.yml
   push:
     branches: [main]
     paths:
