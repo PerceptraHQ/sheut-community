@@ -266,6 +266,21 @@ it("renders template fields and saves them as one revision", async () => {
   );
 });
 
+it("keeps the shared report header content-sized beside tall section navigation", () => {
+  render(
+    <GuidedReportEditor
+      projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+      report={report}
+      template={template}
+      onBusyChange={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  );
+
+  const reportHeader = screen.getByLabelText("Report title").closest("header");
+  expect(reportHeader?.parentElement).toHaveClass("content-start");
+});
+
 it("makes the complete narrative surface editable instead of leaving a one-line editor", () => {
   render(
     <GuidedReportEditor

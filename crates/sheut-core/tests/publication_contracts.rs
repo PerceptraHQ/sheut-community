@@ -64,6 +64,39 @@ fn illicit_ecosystem_catalog_exposes_revision_four_guidance_and_preserves_old_re
             .is_some_and(|text| !text.trim().is_empty())
     }));
 
+    let intelligence_gaps = template
+        .sections()
+        .iter()
+        .find(|section| section.key() == "intelligence_gaps")
+        .unwrap();
+    assert_eq!(intelligence_gaps.title(), "Intelligence gaps");
+    assert_eq!(
+        intelligence_gaps
+            .fields()
+            .iter()
+            .find(|field| field.key() == "legacy_intelligence_gaps")
+            .unwrap()
+            .label(),
+        "Intelligence gaps narrative"
+    );
+
+    let historical = report_template_revision(template.id(), Revision::new(3).unwrap()).unwrap();
+    let historical_intelligence_gaps = historical
+        .sections()
+        .iter()
+        .find(|section| section.key() == "intelligence_gaps")
+        .unwrap();
+    assert_eq!(historical_intelligence_gaps.title(), "Key Intelligence Gaps");
+    assert_eq!(
+        historical_intelligence_gaps
+            .fields()
+            .iter()
+            .find(|field| field.key() == "legacy_intelligence_gaps")
+            .unwrap()
+            .label(),
+        "Legacy intelligence gaps narrative"
+    );
+
     let administration = template
         .sections()
         .iter()
@@ -511,6 +544,17 @@ fn built_in_templates_cover_the_guided_report_taxonomy() {
     assert_eq!(templates[1].name(), "Intrusion Analysis");
     assert_eq!(templates[2].name(), "Campaign Report");
     assert_eq!(templates[3].name(), "Executive Report");
+    for template in [&templates[0], &templates[2], &templates[3]] {
+        assert_eq!(
+            template
+                .sections()
+                .iter()
+                .find(|section| section.key() == "intelligence_gaps")
+                .unwrap()
+                .title(),
+            "Intelligence gaps"
+        );
+    }
     let campaign_sections = templates[2]
         .sections()
         .iter()

@@ -402,7 +402,7 @@ const illicitEcosystemFieldExamples: readonly ReportHelpFieldExample[] = [
       "The sites and accounts are likely coordinated, but the available evidence does not establish that the possible employment match is the person named by the source.",
   },
   {
-    field: "Key intelligence gaps — Unknown",
+    field: "Intelligence gaps",
     guidance: "State a question whose answer could materially change the assessment.",
     example:
       "Whether the named person and the public employment record refer to the same individual.",
