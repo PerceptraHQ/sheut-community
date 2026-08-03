@@ -86,7 +86,10 @@ fn illicit_ecosystem_catalog_exposes_revision_four_guidance_and_preserves_old_re
         .iter()
         .find(|section| section.key() == "intelligence_gaps")
         .unwrap();
-    assert_eq!(historical_intelligence_gaps.title(), "Key Intelligence Gaps");
+    assert_eq!(
+        historical_intelligence_gaps.title(),
+        "Key Intelligence Gaps"
+    );
     assert_eq!(
         historical_intelligence_gaps
             .fields()
