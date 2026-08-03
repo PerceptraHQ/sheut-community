@@ -38,7 +38,7 @@ export function SettingsWorkspace({
   initialSection = "appearance",
   layout,
   onLayoutChange,
-  onTelemetryPreferenceChange = async () => undefined,
+  onTelemetryPreferenceChange = () => Promise.resolve(),
   projectId,
   projectName,
   telemetryConsent = "disabled",
