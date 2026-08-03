@@ -5256,7 +5256,7 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "sheut-core",
  "sheut-mitre",
  "sheut-project",
@@ -5285,7 +5285,7 @@ version = "0.1.0-alpha"
 dependencies = [
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "sheut-core",
 ]
 
@@ -5299,7 +5299,7 @@ dependencies = [
  "keyring",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "sheut-core",
  "sheut-mitre",
  "sheut-stix",
@@ -5340,7 +5340,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "sheut-core",
  "sheut-stix",
  "zeroize",
