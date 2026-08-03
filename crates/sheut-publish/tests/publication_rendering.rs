@@ -797,6 +797,179 @@ fn guided_reports_omit_empty_optional_content_and_blank_table_rows() {
 }
 
 #[test]
+fn illicit_intelligence_records_publish_as_readable_records_and_index_evidence() {
+    let template = report_template_catalog()
+        .into_iter()
+        .find(|template| template.name() == "Illicit Ecosystem Report")
+        .unwrap();
+    let evidence_id = id("54e4a678-c2a8-4fea-868f-37bb65e51982");
+    let evidence_reference: GuidedReportFieldValue = serde_json::from_value(serde_json::json!({
+        "type": "project_references",
+        "value": [{
+            "kind": "evidence",
+            "id": evidence_id,
+            "label": "Facebook profile capture"
+        }]
+    }))
+    .unwrap();
+    let report =
+        GuidedReport::new_blank(id("e7c44850-9f67-4d26-b7e3-0d4ee82339ef"), &template, 1_000)
+            .unwrap()
+            .revise_fields(
+                &template,
+                Revision::new(1).unwrap(),
+                "Illicit ecosystem assessment",
+                BTreeMap::from([
+                    (
+                        "site_inventory".to_owned(),
+                        serde_json::from_value(serde_json::json!({
+                            "type": "linked_rows",
+                            "value": {
+                                "rows": [{
+                                    "Domain or URL": "example.test",
+                                    "Title or label": "Example service",
+                                    "Purpose": "Observed promotion hub",
+                                    "Current status": "Active",
+                                    "Linked identities": "Identity A",
+                                    "Confidence": "Moderate",
+                                    "Evidence references": "Facebook profile capture"
+                                }],
+                                "references": [{
+                                    "rowIndex": 0,
+                                    "column": "Evidence references",
+                                    "reference": {
+                                        "kind": "evidence",
+                                        "id": evidence_id,
+                                        "label": "Facebook profile capture"
+                                    }
+                                }]
+                            }
+                        }))
+                        .unwrap(),
+                    ),
+                    (
+                        "attack_mappings".to_owned(),
+                        GuidedReportFieldValue::Rows(vec![BTreeMap::from([
+                            ("Technique ID".to_owned(), "T1583.001".to_owned()),
+                            (
+                                "Technique name".to_owned(),
+                                "Acquire Infrastructure: Domains".to_owned(),
+                            ),
+                        ])]),
+                    ),
+                    (
+                        "media_evidence_references".to_owned(),
+                        evidence_reference.clone(),
+                    ),
+                    (
+                        "appendix_evidence_references".to_owned(),
+                        evidence_reference,
+                    ),
+                ]),
+                2_000,
+            )
+            .unwrap();
+
+    let publication = PublicationIr::from_guided(&report, &template).unwrap();
+    let sites = publication
+        .sections()
+        .iter()
+        .find(|section| section.key() == "site_inventory")
+        .unwrap();
+    assert!(matches!(
+        sites.blocks(),
+        [PublicationBlock::StructuredRecords { label, records }]
+            if label == "Sites"
+                && records.len() == 1
+                && records[0].len() == 7
+                && records[0].iter().all(|(field, _)| field != "Hosting and DNS")
+    ));
+    let attack = publication
+        .sections()
+        .iter()
+        .find(|section| section.key() == "attack_mappings")
+        .unwrap();
+    assert!(matches!(
+        attack.blocks(),
+        [PublicationBlock::Table { headers, rows }]
+            if headers == &["Technique ID", "Technique name"] && rows.len() == 1
+    ));
+
+    let evidence_appendix = publication
+        .sections()
+        .iter()
+        .find(|section| section.key() == "evidence_appendix")
+        .unwrap();
+    let indexed_references = evidence_appendix
+        .blocks()
+        .iter()
+        .find_map(|block| match block {
+            PublicationBlock::EvidenceIndex { items } => Some(items),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(indexed_references.len(), 1);
+    assert_eq!(indexed_references[0].label(), "Facebook profile capture");
+    assert_eq!(
+        indexed_references[0].section_titles(),
+        &[
+            "Site Inventory",
+            "Media and File Evidence",
+            "Evidence Appendix"
+        ]
+    );
+    assert!(evidence_appendix.blocks().iter().any(|block| matches!(
+        block,
+        PublicationBlock::Subheading(text)
+            if text == "Evidence index"
+    )));
+
+    let html = String::from_utf8(
+        render_publication(
+            &publication,
+            &snapshot(
+                PublicationFormat::Html,
+                PaperSize::A4,
+                PageOrientation::Portrait,
+            ),
+            Some(&brand()),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(html.contains("class=\"structured-records\""));
+    assert!(html.contains("class=\"reference-list\""));
+    assert!(!html.contains("<th scope=\"col\">Reference</th>"));
+    assert!(!html.to_ascii_lowercase().contains("sheut reporting"));
+
+    let document_xml = docx_document_xml(
+        &render_publication(
+            &publication,
+            &snapshot(
+                PublicationFormat::Docx,
+                PaperSize::A4,
+                PageOrientation::Portrait,
+            ),
+            Some(&brand()),
+        )
+        .unwrap(),
+    );
+    assert!(!document_xml.contains("SHEUT REPORTING"));
+
+    let pdf = render_publication(
+        &publication,
+        &snapshot(
+            PublicationFormat::Pdf,
+            PaperSize::A4,
+            PageOrientation::Portrait,
+        ),
+        Some(&brand()),
+    )
+    .unwrap();
+    assert!(pdf.starts_with(b"%PDF-"));
+}
+
+#[test]
 fn every_guided_template_omits_unfilled_sections_before_rendering() {
     for template in report_template_catalog() {
         let report =
@@ -918,6 +1091,29 @@ fn guided_evidence_images_render_from_project_assets_without_leaking_internal_id
             )
             .unwrap();
     let publication = PublicationIr::from_guided(&report, &template).unwrap();
+    let evidence_appendix = publication
+        .sections()
+        .iter()
+        .find(|section| section.key() == "evidence_appendix")
+        .unwrap();
+    assert!(evidence_appendix.blocks().iter().any(|block| matches!(
+        block,
+        PublicationBlock::Subheading(text) if text == "Evidence index"
+    )));
+    let indexed_images = evidence_appendix
+        .blocks()
+        .iter()
+        .find_map(|block| match block {
+            PublicationBlock::EvidenceIndex { items } => Some(items),
+            _ => None,
+        })
+        .unwrap();
+    assert!(indexed_images.iter().any(|item| {
+        item.label() == "Observed landing page" && item.section_titles() == ["Executive summary"]
+    }));
+    assert!(indexed_images.iter().any(|item| {
+        item.label() == "Archive overview" && item.section_titles() == ["Executive summary"]
+    }));
     assert_eq!(
         publication.sections().last().unwrap().title(),
         "Appendix A — Evidence images"
@@ -927,6 +1123,27 @@ fn guided_evidence_images_render_from_project_assets_without_leaking_internal_id
             (evidence_id, PNG.to_vec()),
             (appendix_evidence_id, PNG.to_vec()),
         ]),
+        evidence_metadata: HashMap::from([(
+            evidence_id,
+            serde_json::from_value(serde_json::json!({
+                "id": evidence_id,
+                "revision": 1,
+                "mediaType": "image/png",
+                "fileName": "captured-storefront.png",
+                "byteLen": PNG.len(),
+                "sha256": "a".repeat(64),
+                "title": "Captured storefront",
+                "description": "Landing page capture",
+                "source": "Analyst collection",
+                "capturedAt": "2026-08-03",
+                "sourceUrl": "https://example.test",
+                "tags": [],
+                "analystNotes": "The capture corroborates the observed branding.",
+                "createdAtUnixMs": 1_000,
+                "updatedAtUnixMs": 1_000
+            }))
+            .unwrap(),
+        )]),
         ..PublicationAssets::default()
     };
 
@@ -953,6 +1170,9 @@ fn guided_evidence_images_render_from_project_assets_without_leaking_internal_id
     );
     assert!(html.contains("Figure 1. Captured storefront — Observed landing page"));
     assert!(html.contains("Figure A.1. Archive overview"));
+    assert!(html.contains("Analyst collection"));
+    assert!(html.contains("The capture corroborates the observed branding."));
+    assert!(html.contains(&"a".repeat(64)));
     assert!(!html.contains(&evidence_id.to_string()));
 
     let docx = render_publication_with_assets(

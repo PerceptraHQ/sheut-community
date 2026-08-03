@@ -2183,7 +2183,7 @@ pub(super) async fn export_saved_document(
                 manager,
                 project_id,
                 &brand,
-                &publication.evidence_image_ids(),
+                &publication.evidence_ids(),
                 now_unix_ms,
             )?;
             let records = manager.list_publication_records(project_id, now_unix_ms)?;
@@ -2282,7 +2282,7 @@ pub(super) async fn export_guided_report(
                 manager,
                 project_id,
                 &brand,
-                &publication.evidence_image_ids(),
+                &publication.evidence_ids(),
                 now_unix_ms,
             )?;
             let records = manager.list_publication_records(project_id, now_unix_ms)?;
@@ -2415,16 +2415,20 @@ pub(super) async fn reproduce_publication(
                 })
                 .transpose()?;
             let brand = publication_brand(manager, project_id, brand_selection, now_unix_ms)?;
-            let evidence_ids = match &source {
+            let publication = match &source {
                 HistoricalPublication::Freeform(document) => PublicationIr::from_freeform(document),
                 HistoricalPublication::Guided(report, template) => {
                     PublicationIr::from_guided(report, template)
                 }
             }
-            .map_err(|_| LifecycleError::from_code(LifecycleErrorCode::InvalidDocument))?
-            .evidence_image_ids();
-            let assets =
-                publication_assets(manager, project_id, &brand, &evidence_ids, now_unix_ms)?;
+            .map_err(|_| LifecycleError::from_code(LifecycleErrorCode::InvalidDocument))?;
+            let assets = publication_assets(
+                manager,
+                project_id,
+                &brand,
+                &publication.evidence_ids(),
+                now_unix_ms,
+            )?;
             Ok((record, source, brand, assets))
         })
         .await?;
@@ -2504,7 +2508,7 @@ fn publication_assets(
     manager: &mut ProjectManager<OsProjectKeyStore>,
     project_id: LocalId,
     brand: &BrandProfile,
-    evidence_image_ids: &[LocalId],
+    evidence_ids: &[LocalId],
     now_unix_ms: i64,
 ) -> Result<PublicationAssets, LifecycleError> {
     let mut assets = PublicationAssets::default();
@@ -2524,12 +2528,16 @@ fn publication_assets(
             BrandAssetRole::CoverArtwork => assets.cover_artwork = Some(payload),
         }
     }
-    for evidence_id in evidence_image_ids {
-        if assets.evidence_images.contains_key(evidence_id) {
+    for evidence_id in evidence_ids {
+        if assets.evidence_metadata.contains_key(evidence_id) {
             continue;
         }
-        let (_, payload) = manager.load_evidence_image(project_id, *evidence_id, now_unix_ms)?;
-        assets.evidence_images.insert(*evidence_id, payload);
+        let (metadata, payload) =
+            manager.load_evidence_file(project_id, *evidence_id, now_unix_ms)?;
+        if ImageMediaType::detect(&payload).is_ok() {
+            assets.evidence_images.insert(*evidence_id, payload);
+        }
+        assets.evidence_metadata.insert(*evidence_id, metadata);
     }
     Ok(assets)
 }

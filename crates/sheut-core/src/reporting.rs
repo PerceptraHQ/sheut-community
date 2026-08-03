@@ -1504,6 +1504,21 @@ fn illicit_ecosystem_template_v4() -> ReportTemplateDefinition {
         "Name the accountable team or organisation separately from the individual authors."
             .to_owned(),
     );
+    let evidence_notes = sections
+        .iter_mut()
+        .find(|section| section.key == "evidence_appendix")
+        .and_then(|section| {
+            section
+                .fields
+                .iter_mut()
+                .find(|field| field.key == "evidence_notes")
+        })
+        .expect("revision three contains evidence notes");
+    evidence_notes.label = "Evidence analysis and explanatory figures".to_owned();
+    evidence_notes.help_text = Some(
+        "Explain what an extract, image or graph shows and how it supports the assessment. The automatic Evidence index separately records the linked project evidence."
+            .to_owned(),
+    );
 
     ReportTemplateDefinition::new_custom(
         id,
@@ -2379,12 +2394,57 @@ impl ProjectDataReference {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GuidedReportRowReference {
+    row_index: usize,
+    column: String,
+    reference: ProjectDataReference,
+}
+
+impl GuidedReportRowReference {
+    #[must_use]
+    pub const fn row_index(&self) -> usize {
+        self.row_index
+    }
+
+    #[must_use]
+    pub fn column(&self) -> &str {
+        &self.column
+    }
+
+    #[must_use]
+    pub const fn reference(&self) -> &ProjectDataReference {
+        &self.reference
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GuidedReportLinkedRows {
+    rows: Vec<BTreeMap<String, String>>,
+    references: Vec<GuidedReportRowReference>,
+}
+
+impl GuidedReportLinkedRows {
+    #[must_use]
+    pub fn rows(&self) -> &[BTreeMap<String, String>] {
+        &self.rows
+    }
+
+    #[must_use]
+    pub fn references(&self) -> &[GuidedReportRowReference] {
+        &self.references
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 pub enum GuidedReportFieldValue {
     Text(String),
     Narrative(Value),
     Rows(Vec<BTreeMap<String, String>>),
+    LinkedRows(GuidedReportLinkedRows),
     ProjectReferences(Vec<ProjectDataReference>),
 }
 
@@ -2757,6 +2817,16 @@ impl GuidedReport {
                     GuidedReportFieldValue::Rows(migrate_legacy_rows(
                         source_key,
                         rows,
+                        &target_field.columns,
+                        &mut legacy_metadata,
+                    ))
+                }
+                GuidedReportFieldValue::LinkedRows(rows)
+                    if target_field.kind == ReportFieldKind::RepeatableRows =>
+                {
+                    GuidedReportFieldValue::Rows(migrate_legacy_rows(
+                        source_key,
+                        rows.rows(),
                         &target_field.columns,
                         &mut legacy_metadata,
                     ))
@@ -3137,6 +3207,19 @@ fn preserve_legacy_value(
                 }
             }
         }
+        GuidedReportFieldValue::LinkedRows(rows) => {
+            for (row_index, row) in rows.rows().iter().enumerate() {
+                for (column, value) in row.iter().filter(|(_, value)| !value.trim().is_empty()) {
+                    legacy_metadata.push(BTreeMap::from([
+                        (
+                            "Label".to_owned(),
+                            format!("Legacy {field_key} row {}: {column}", row_index + 1),
+                        ),
+                        ("Value".to_owned(), value.trim().to_owned()),
+                    ]));
+                }
+            }
+        }
         GuidedReportFieldValue::Narrative(_) | GuidedReportFieldValue::ProjectReferences(_) => {
             return Err(DomainError::new(DomainErrorCode::InvalidGuidedReport));
         }
@@ -3167,31 +3250,59 @@ fn validate_field_value(value: &GuidedReportFieldValue) -> Result<(), DomainErro
             }
         }
         GuidedReportFieldValue::Narrative(root) => super::validate_document_root(root)?,
-        GuidedReportFieldValue::Rows(rows) => {
-            if rows.len() > MAX_REPEATABLE_ROWS {
-                return Err(DomainError::new(code));
-            }
-            for row in rows {
-                if row.len() > 32
-                    || row.iter().any(|(key, value)| {
-                        bounded_text(key, 80, code).is_err()
-                            || value.chars().count() > MAX_FIELD_TEXT_CHARS
-                            || value.chars().any(|character| character == '\0')
-                    })
-                {
-                    return Err(DomainError::new(code));
-                }
-            }
+        GuidedReportFieldValue::Rows(rows) => validate_rows(rows, &[], code)?,
+        GuidedReportFieldValue::LinkedRows(linked) => {
+            validate_rows(linked.rows(), linked.references(), code)?;
         }
         GuidedReportFieldValue::ProjectReferences(references) => {
-            if references.len() > MAX_INCLUDED_ITEMS
-                || references
-                    .iter()
-                    .any(|reference| bounded_text(&reference.label, 200, code).is_err())
-            {
-                return Err(DomainError::new(code));
-            }
+            validate_project_references(references, code)?;
         }
+    }
+    Ok(())
+}
+
+fn validate_rows(
+    rows: &[BTreeMap<String, String>],
+    references: &[GuidedReportRowReference],
+    code: DomainErrorCode,
+) -> Result<(), DomainError> {
+    if rows.len() > MAX_REPEATABLE_ROWS {
+        return Err(DomainError::new(code));
+    }
+    for row in rows {
+        if row.len() > 32
+            || row.iter().any(|(key, value)| {
+                bounded_text(key, 80, code).is_err()
+                    || value.chars().count() > MAX_FIELD_TEXT_CHARS
+                    || value.chars().any(|character| character == '\0')
+            })
+        {
+            return Err(DomainError::new(code));
+        }
+    }
+    if references.len() > MAX_INCLUDED_ITEMS
+        || references.iter().any(|reference| {
+            reference.row_index >= rows.len()
+                || !rows[reference.row_index].contains_key(&reference.column)
+                || bounded_text(&reference.column, 80, code).is_err()
+                || bounded_text(&reference.reference.label, 200, code).is_err()
+        })
+    {
+        return Err(DomainError::new(code));
+    }
+    Ok(())
+}
+
+fn validate_project_references(
+    references: &[ProjectDataReference],
+    code: DomainErrorCode,
+) -> Result<(), DomainError> {
+    if references.len() > MAX_INCLUDED_ITEMS
+        || references
+            .iter()
+            .any(|reference| bounded_text(&reference.label, 200, code).is_err())
+    {
+        return Err(DomainError::new(code));
     }
     Ok(())
 }
@@ -3214,12 +3325,20 @@ fn validate_value_for_template_field(
     {
         return Err(DomainError::new(DomainErrorCode::InvalidGuidedReport));
     }
-    if let GuidedReportFieldValue::Rows(rows) = value {
+    if let Some(rows) = guided_report_rows(value) {
         let allowed_columns = field.columns.iter().collect::<HashSet<_>>();
         if rows
             .iter()
             .flat_map(BTreeMap::keys)
             .any(|column| !allowed_columns.contains(column))
+        {
+            return Err(DomainError::new(DomainErrorCode::InvalidGuidedReport));
+        }
+        if let GuidedReportFieldValue::LinkedRows(linked) = value
+            && linked
+                .references()
+                .iter()
+                .any(|reference| !allowed_columns.contains(&reference.column))
         {
             return Err(DomainError::new(DomainErrorCode::InvalidGuidedReport));
         }
@@ -3251,6 +3370,9 @@ fn value_matches_kind(value: &GuidedReportFieldValue, kind: ReportFieldKind) -> 
             GuidedReportFieldValue::Rows(_),
             ReportFieldKind::RepeatableRows
         ) | (
+            GuidedReportFieldValue::LinkedRows(_),
+            ReportFieldKind::RepeatableRows
+        ) | (
             GuidedReportFieldValue::ProjectReferences(_),
             ReportFieldKind::ProjectReferences
         )
@@ -3264,7 +3386,19 @@ fn value_is_empty(value: &GuidedReportFieldValue) -> bool {
         GuidedReportFieldValue::Rows(rows) => rows
             .iter()
             .all(|row| row.values().all(|cell| cell.trim().is_empty())),
+        GuidedReportFieldValue::LinkedRows(rows) => rows
+            .rows()
+            .iter()
+            .all(|row| row.values().all(|cell| cell.trim().is_empty())),
         GuidedReportFieldValue::ProjectReferences(references) => references.is_empty(),
+    }
+}
+
+fn guided_report_rows(value: &GuidedReportFieldValue) -> Option<&[BTreeMap<String, String>]> {
+    match value {
+        GuidedReportFieldValue::Rows(rows) => Some(rows),
+        GuidedReportFieldValue::LinkedRows(rows) => Some(rows.rows()),
+        _ => None,
     }
 }
 

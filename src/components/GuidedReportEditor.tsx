@@ -1,3 +1,4 @@
+import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Button } from "@base-ui/react/button";
 import { Dialog } from "@base-ui/react/dialog";
 import { Field } from "@base-ui/react/field";
@@ -21,6 +22,7 @@ import {
 import {
   type GuidedReport,
   type GuidedReportFieldValue,
+  type GuidedReportRowReference,
   getGuidedReportReadiness,
   guidedReportErrorMessage,
   type ProjectDataSelection,
@@ -34,6 +36,7 @@ import {
 } from "../lib/guided-reports";
 import type { TlpMarking } from "../lib/projects";
 import { reportFieldProjectSource } from "../lib/reportHelp";
+import { AlertDialogFrame } from "./AlertDialogFrame";
 import { AutocompleteField } from "./AutocompleteField";
 import { DialogFrame } from "./DialogFrame";
 import { GuidedReportNarrativeInput } from "./GuidedReportNarrativeInput";
@@ -1027,14 +1030,26 @@ function GuidedField({
     );
   }
   if (field.kind === "repeatable_rows") {
-    const rows = value?.type === "rows" ? value.value : [];
+    const rows =
+      value?.type === "rows" ? value.value : value?.type === "linked_rows" ? value.value.rows : [];
+    const references = value?.type === "linked_rows" ? value.value.references : [];
     return (
       <div className="grid gap-1.5" onBlurCapture={() => setTouched(true)}>
         <GuidedRows
           field={field}
           projectId={projectId}
           rows={rows}
-          onChange={(next) => onChange({ type: "rows", value: next })}
+          references={references}
+          onChange={(nextRows, nextReferences) =>
+            onChange(
+              nextReferences.length > 0
+                ? {
+                    type: "linked_rows",
+                    value: { rows: nextRows, references: nextReferences },
+                  }
+                : { type: "rows", value: nextRows },
+            )
+          }
         />
         <p className="m-0 text-copy-faint text-[11px] leading-4">
           {field.help_text ?? reportFieldProjectSource(field.label)}
@@ -1187,7 +1202,8 @@ function guidedFieldHasPublicationContent(value: GuidedReportFieldValue | undefi
   if (value.type === "text") return Boolean(value.value.trim());
   if (value.type === "narrative") return narrativeHasPublicationContent(value.value);
   if (value.type === "project_references") return value.value.length > 0;
-  return value.value.some((row) => Object.values(row).some((cell) => Boolean(cell.trim())));
+  const rows = value.type === "linked_rows" ? value.value.rows : value.value;
+  return rows.some((row) => Object.values(row).some((cell) => Boolean(cell.trim())));
 }
 
 function guidedFieldRecommendedMissing(
@@ -1200,7 +1216,8 @@ function guidedFieldRecommendedMissing(
     return !narrativeHasText(root);
   }
   if (field.kind === "repeatable_rows") {
-    const rows = value?.type === "rows" ? value.value : [];
+    const rows =
+      value?.type === "rows" ? value.value : value?.type === "linked_rows" ? value.value.rows : [];
     return !rows.some((row) => Object.values(row).some((cell) => Boolean(cell.trim())));
   }
   if (field.kind === "project_references") {
@@ -1216,7 +1233,8 @@ function guidedFieldHardValidationMessage(
   value: GuidedReportFieldValue | undefined,
 ): string | null {
   if (field.kind === "repeatable_rows") {
-    const rows = value?.type === "rows" ? value.value : [];
+    const rows =
+      value?.type === "rows" ? value.value : value?.type === "linked_rows" ? value.value.rows : [];
     return rows.some((row) => Object.values(row).some((cell) => cell.length > 100_000))
       ? `Keep each ${field.label} table cell to 100,000 characters or fewer.`
       : null;
@@ -1324,11 +1342,13 @@ function GuidedRows({
   field,
   onChange,
   projectId,
+  references,
   rows,
 }: {
   field: ReportTemplateField;
-  onChange: (rows: Array<Record<string, string>>) => void;
+  onChange: (rows: Array<Record<string, string>>, references: GuidedReportRowReference[]) => void;
   projectId: string;
+  references: GuidedReportRowReference[];
   rows: Array<Record<string, string>>;
 }) {
   const nextRowKey = useRef(rows.length);
@@ -1337,167 +1357,324 @@ function GuidedRows({
   );
   const [open, setOpen] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [removingIndex, setRemovingIndex] = useState<number | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [draftReferences, setDraftReferences] = useState<
+    Record<string, GuidedReportRowReference["reference"]>
+  >({});
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const noun = structuredRecordNoun(field.label);
   const startAdd = () => {
     setEditingIndex(null);
     setDraft(Object.fromEntries(field.columns.map((column) => [column, ""])));
+    setDraftReferences({});
   };
   const startEdit = (rowIndex: number) => {
     setEditingIndex(rowIndex);
     setDraft(
       Object.fromEntries(field.columns.map((column) => [column, rows[rowIndex]?.[column] ?? ""])),
     );
+    setDraftReferences(
+      Object.fromEntries(
+        references
+          .filter((reference) => reference.rowIndex === rowIndex)
+          .map((reference) => [reference.column, reference.reference]),
+      ),
+    );
   };
   const dialogRowIndex = editingIndex ?? rows.length;
+  const removeRecord = () => {
+    if (removingIndex === null) return;
+    setRowKeys((current) => current.filter((_, index) => index !== removingIndex));
+    onChange(
+      rows.filter((_, index) => index !== removingIndex),
+      references
+        .filter((reference) => reference.rowIndex !== removingIndex)
+        .map((reference) => ({
+          ...reference,
+          rowIndex:
+            reference.rowIndex > removingIndex ? reference.rowIndex - 1 : reference.rowIndex,
+        })),
+    );
+    setRemovingIndex(null);
+    window.setTimeout(() => addButtonRef.current?.focus(), 0);
+  };
+  const removingTitle = removingIndex === null ? "" : structuredRecordTitle(rows[removingIndex]);
   return (
-    <Dialog.Root
-      open={open}
-      onOpenChange={(nextOpen) => {
-        setOpen(nextOpen);
-        if (!nextOpen) setEditingIndex(null);
-      }}
-    >
-      <div className="grid gap-2" data-report-field-key={field.key}>
-        <div className="flex items-center justify-between gap-3">
-          <span className="font-medium text-copy-secondary text-xs">{field.label}</span>
-          <Dialog.Trigger
-            render={<Button className="control-button" />}
-            type="button"
-            onClick={startAdd}
-          >
-            <IconPlus size={14} stroke={1.7} aria-hidden="true" />
-            Add record
-          </Dialog.Trigger>
-        </div>
-        {rows.length === 0 ? (
-          <p className="m-0 rounded-sm border border-dashed border-panel-border px-3 py-3 text-copy-faint text-xs">
-            No records yet.
-          </p>
-        ) : (
-          <ul className="m-0 grid list-none gap-2 p-0" aria-label={field.label}>
-            {rows.map((row, rowIndex) => {
-              const rowKey = rowKeys.at(rowIndex);
-              const summary = Object.entries(row)
-                .filter(([, value]) => value.trim())
-                .slice(0, 4);
-              return (
-                <li
-                  className="rounded-sm border border-panel-border bg-panel-deep p-3"
-                  key={rowKey}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <dl className="m-0 grid min-w-0 flex-1 gap-1 sm:grid-cols-2">
-                      {summary.length > 0 ? (
-                        summary.map(([column, cell]) => (
-                          <div className="min-w-0" key={column}>
-                            <dt className="text-[10px] text-copy-faint uppercase tracking-wide">
-                              {column}
-                            </dt>
-                            <dd className="m-0 truncate text-copy-primary text-xs">{cell}</dd>
-                          </div>
-                        ))
-                      ) : (
-                        <div>
-                          <dt className="sr-only">Record status</dt>
-                          <dd className="m-0 text-copy-faint text-xs">Blank record</dd>
-                        </div>
-                      )}
-                    </dl>
-                    <div className="flex shrink-0 gap-1">
-                      <Dialog.Trigger
-                        render={<Button className="control-button" />}
-                        type="button"
-                        onClick={() => startEdit(rowIndex)}
-                      >
-                        Edit
-                      </Dialog.Trigger>
-                      <Button
-                        className="icon-control"
-                        type="button"
-                        aria-label={`Delete ${field.label} record ${rowIndex + 1}`}
-                        onClick={() => {
-                          setRowKeys((current) => current.filter((_, index) => index !== rowIndex));
-                          onChange(rows.filter((_, index) => index !== rowIndex));
-                        }}
-                      >
-                        <IconTrash size={14} stroke={1.7} aria-hidden="true" />
-                      </Button>
+    <>
+      <Dialog.Root
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (!nextOpen) setEditingIndex(null);
+        }}
+      >
+        <div className="grid gap-2" data-report-field-key={field.key}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium text-copy-secondary text-xs">{field.label}</span>
+            <Dialog.Trigger
+              render={<Button className="control-button" ref={addButtonRef} />}
+              type="button"
+              onClick={startAdd}
+            >
+              <IconPlus size={14} stroke={1.7} aria-hidden="true" />
+              Add {noun}
+            </Dialog.Trigger>
+          </div>
+          {rows.length === 0 ? (
+            <p className="m-0 rounded-sm border border-dashed border-panel-border px-3 py-3 text-copy-faint text-xs">
+              No {structuredRecordNoun(field.label, true)} added. Add one when it strengthens the
+              section.
+            </p>
+          ) : (
+            <ul className="m-0 grid list-none gap-2 p-0" aria-label={field.label}>
+              {rows.map((row, rowIndex) => {
+                const rowKey = rowKeys.at(rowIndex);
+                const populated = Object.entries(row).filter(([, value]) => value.trim());
+                const title = structuredRecordTitle(row);
+                const summary = populated.filter(([, value]) => value !== title).slice(0, 3);
+                const linkedReferences = references.filter(
+                  (reference) => reference.rowIndex === rowIndex,
+                );
+                return (
+                  <li
+                    className="rounded-sm border border-panel-border bg-panel-deep p-3 transition-colors hover:border-panel-strong"
+                    key={rowKey}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <h4 className="m-0 truncate font-medium text-copy-primary text-sm">
+                          {title}
+                        </h4>
+                        <p className="mt-0.5 mb-2 text-[10px] text-copy-faint uppercase tracking-wide">
+                          {noun} {rowIndex + 1}
+                        </p>
+                        {linkedReferences.length > 0 ? (
+                          <p className="mt-0 mb-2 text-[11px] text-accent">
+                            {linkedReferences.length} linked project reference
+                            {linkedReferences.length === 1 ? "" : "s"} · included in publication
+                            provenance
+                          </p>
+                        ) : null}
+                        <dl className="m-0 grid gap-1 sm:grid-cols-3">
+                          {summary.length > 0 ? (
+                            summary.map(([column, cell]) => (
+                              <div className="min-w-0" key={column}>
+                                <dt className="text-[10px] text-copy-faint uppercase tracking-wide">
+                                  {column}
+                                </dt>
+                                <dd className="m-0 truncate text-copy-primary text-xs">{cell}</dd>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="sm:col-span-3">
+                              <dt className="sr-only">Record status</dt>
+                              <dd className="m-0 text-copy-faint text-xs">
+                                Open the record to add supporting attributes.
+                              </dd>
+                            </div>
+                          )}
+                        </dl>
+                      </div>
+                      <div className="flex shrink-0 gap-1">
+                        <Dialog.Trigger
+                          render={<Button className="control-button" />}
+                          type="button"
+                          aria-label={`Edit ${noun} ${title}`}
+                          onClick={() => startEdit(rowIndex)}
+                        >
+                          Edit
+                        </Dialog.Trigger>
+                        <Button
+                          className="icon-control"
+                          type="button"
+                          aria-label={`Remove ${noun} ${title}`}
+                          onClick={() => setRemovingIndex(rowIndex)}
+                        >
+                          <IconTrash size={14} stroke={1.7} aria-hidden="true" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </div>
-      <DialogFrame width="wide">
-        <header className="flex h-11 items-center justify-between border-panel-border border-b px-4">
-          <Dialog.Title className="m-0 text-sm font-semibold">
-            {editingIndex === null ? `Add ${field.label} record` : `Edit ${field.label} record`}
-          </Dialog.Title>
-          <Dialog.Close render={<Button className="icon-control" />} aria-label="Close">
-            <IconX size={16} stroke={1.7} aria-hidden="true" />
-          </Dialog.Close>
-        </header>
-        <Dialog.Description className="sr-only">
-          Edit one structured record. Cancel closes the dialog without changing the report.
-        </Dialog.Description>
-        <div className="grid max-h-[70vh] gap-4 overflow-y-auto p-4 sm:grid-cols-2">
-          {field.columns.map((column) => (
-            <div className="grid min-w-0 content-start gap-1.5" key={column}>
-              <GuidedRowCellControl
-                column={column}
-                fieldLabel={field.label}
-                onChange={(value) => setDraft((current) => ({ ...current, [column]: value }))}
-                rowIndex={dialogRowIndex}
-                value={draft[column] ?? ""}
-              />
-              {columnProjectDataConstraint(field.label, column) ? (
-                <ProjectDataPicker
-                  {...columnProjectDataConstraint(field.label, column)}
-                  contextLabel={`${field.label} — ${column}`}
-                  projectId={projectId}
-                  triggerLabel={`Choose project data for ${field.label} row ${dialogRowIndex + 1} ${column}`}
-                  triggerText={`Choose ${column.toLocaleLowerCase()}`}
-                  onInsert={(reference) =>
-                    setDraft((current) => ({
-                      ...current,
-                      [column]: reportValueForColumn(reference, column, true),
-                    }))
-                  }
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        <DialogFrame width="wide">
+          <header className="flex h-11 items-center justify-between border-panel-border border-b px-4">
+            <Dialog.Title className="m-0 text-sm font-semibold">
+              {editingIndex === null ? `Add ${noun}` : `Edit ${noun}`}
+            </Dialog.Title>
+            <Dialog.Close render={<Button className="icon-control" />} aria-label="Close">
+              <IconX size={16} stroke={1.7} aria-hidden="true" />
+            </Dialog.Close>
+          </header>
+          <Dialog.Description className="sr-only">
+            Edit one structured record. Cancel closes the dialog without changing the report.
+          </Dialog.Description>
+          <div className="grid max-h-[70vh] gap-4 overflow-y-auto p-4 sm:grid-cols-2">
+            {field.columns.map((column) => (
+              <div className="grid min-w-0 content-start gap-1.5" key={column}>
+                <GuidedRowCellControl
+                  column={column}
+                  fieldLabel={field.label}
+                  onChange={(value) => {
+                    setDraft((current) => ({ ...current, [column]: value }));
+                    setDraftReferences((current) => {
+                      const next = { ...current };
+                      delete next[column];
+                      return next;
+                    });
+                  }}
+                  rowIndex={dialogRowIndex}
+                  value={draft[column] ?? ""}
                 />
-              ) : null}
-              <p className="m-0 text-copy-faint text-[11px] leading-4">
-                {reportFieldProjectSource(`${field.label} — ${column}`)}
-              </p>
+                {columnProjectDataConstraint(field.label, column) ? (
+                  <div className="grid gap-1.5">
+                    <ProjectDataPicker
+                      {...columnProjectDataConstraint(field.label, column)}
+                      contextLabel={`${field.label} — ${column}`}
+                      projectId={projectId}
+                      triggerLabel={`Choose project data for ${field.label} row ${dialogRowIndex + 1} ${column}`}
+                      triggerText={`Choose ${column.toLocaleLowerCase()}`}
+                      onInsert={(reference) => {
+                        setDraft((current) => ({
+                          ...current,
+                          [column]: reportValueForColumn(reference, column, true),
+                        }));
+                        setDraftReferences((current) => ({
+                          ...current,
+                          [column]: {
+                            kind: reference.kind,
+                            id: reference.id,
+                            label: reference.label,
+                          },
+                        }));
+                      }}
+                    />
+                    {draftReferences[column] ? (
+                      <p className="m-0 text-[11px] text-accent">
+                        Linked to {draftReferences[column].label}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                <p className="m-0 text-copy-faint text-[11px] leading-4">
+                  {reportFieldProjectSource(`${field.label} — ${column}`)}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2 border-panel-border border-t p-4">
+            <Dialog.Close render={<Button className="control-button" />} type="button">
+              Cancel
+            </Dialog.Close>
+            <Button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                if (editingIndex === null) {
+                  const key = `${field.key}-record-${nextRowKey.current}`;
+                  nextRowKey.current += 1;
+                  setRowKeys((current) => [...current, key]);
+                  const rowIndex = rows.length;
+                  onChange(
+                    [...rows, draft],
+                    [
+                      ...references,
+                      ...Object.entries(draftReferences).map(([column, reference]) => ({
+                        rowIndex,
+                        column,
+                        reference,
+                      })),
+                    ],
+                  );
+                } else {
+                  onChange(
+                    rows.map((row, index) => (index === editingIndex ? draft : row)),
+                    [
+                      ...references.filter((reference) => reference.rowIndex !== editingIndex),
+                      ...Object.entries(draftReferences).map(([column, reference]) => ({
+                        rowIndex: editingIndex,
+                        column,
+                        reference,
+                      })),
+                    ],
+                  );
+                }
+                setOpen(false);
+              }}
+            >
+              Save record
+            </Button>
+          </div>
+        </DialogFrame>
+      </Dialog.Root>
+      <AlertDialog.Root
+        open={removingIndex !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setRemovingIndex(null);
+        }}
+      >
+        <AlertDialogFrame width="compact">
+          <div className="grid gap-4 p-4">
+            <AlertDialog.Title className="m-0 text-sm font-semibold">
+              Remove {noun}?
+            </AlertDialog.Title>
+            <AlertDialog.Description className="m-0 text-copy-muted text-xs leading-5">
+              This removes “{removingTitle}” from the report section. The underlying project
+              intelligence or evidence is not deleted.
+            </AlertDialog.Description>
+            <div className="flex justify-end gap-2 border-panel-border border-t pt-3">
+              <AlertDialog.Close render={<Button className="control-button" />}>
+                Cancel
+              </AlertDialog.Close>
+              <Button className="danger-button" type="button" onClick={removeRecord}>
+                Remove {noun}
+              </Button>
             </div>
-          ))}
-        </div>
-        <div className="flex justify-end gap-2 border-panel-border border-t p-4">
-          <Dialog.Close render={<Button className="control-button" />} type="button">
-            Cancel
-          </Dialog.Close>
-          <Button
-            className="primary-button"
-            type="button"
-            onClick={() => {
-              if (editingIndex === null) {
-                const key = `${field.key}-record-${nextRowKey.current}`;
-                nextRowKey.current += 1;
-                setRowKeys((current) => [...current, key]);
-                onChange([...rows, draft]);
-              } else {
-                onChange(rows.map((row, index) => (index === editingIndex ? draft : row)));
-              }
-              setOpen(false);
-            }}
-          >
-            Save record
-          </Button>
-        </div>
-      </DialogFrame>
-    </Dialog.Root>
+          </div>
+        </AlertDialogFrame>
+      </AlertDialog.Root>
+    </>
   );
+}
+
+function structuredRecordTitle(row: Record<string, string> | undefined): string {
+  return (
+    Object.values(row ?? {})
+      .find((value) => value.trim())
+      ?.trim() ?? "Untitled record"
+  );
+}
+
+function structuredRecordNoun(label: string, plural = false): string {
+  const normalized = normalizeReportColumn(label);
+  const singular = normalized.includes("site")
+    ? "site"
+    : normalized.includes("timeline")
+      ? "event"
+      : normalized.includes("source")
+        ? "source"
+        : normalized.includes("profile")
+          ? "profile"
+          : normalized.includes("identit")
+            ? "identity"
+            : normalized.includes("relationship")
+              ? "relationship"
+              : normalized.includes("certificate")
+                ? "certificate"
+                : normalized.includes("finding")
+                  ? "finding"
+                  : normalized.includes("requirement")
+                    ? "requirement"
+                    : normalized.includes("recommend")
+                      ? "recommendation"
+                      : "record";
+  if (!plural) return singular;
+  if (singular === "identity") return "identities";
+  return `${singular}s`;
 }
 
 function GuidedRowCellControl({

@@ -8,6 +8,7 @@ import {
   getGuidedReportReadiness,
   importEvidenceImage,
   listEvidenceFiles,
+  listReportProjectData,
   loadEvidenceImage,
   type ReportTemplateDefinition,
   saveGuidedReport,
@@ -24,6 +25,7 @@ vi.mock("../lib/guided-reports", async (importOriginal) => ({
   saveGuidedReport: vi.fn(),
   importEvidenceImage: vi.fn(),
   listEvidenceFiles: vi.fn(),
+  listReportProjectData: vi.fn(),
   loadEvidenceImage: vi.fn(),
   getGuidedReportReadiness: vi.fn(),
   updateGuidedReportSectionDisposition: vi.fn(),
@@ -105,6 +107,7 @@ beforeEach(() => {
     <T,>(operation: () => Promise<T>): Promise<T> => operation(),
   );
   vi.mocked(listEvidenceFiles).mockResolvedValue([]);
+  vi.mocked(listReportProjectData).mockResolvedValue([]);
   vi.mocked(getGuidedReportReadiness).mockResolvedValue([]);
   vi.mocked(loadEvidenceImage).mockRejectedValue(new Error("not rendered in this test"));
   vi.mocked(listBrandProfiles).mockResolvedValue([]);
@@ -377,7 +380,7 @@ it("keeps unused secondary fields behind one section-level add menu", async () =
 
   expect(document.querySelector('[contenteditable="true"][aria-label="Assessment"]')).toBeVisible();
   expect(screen.queryByLabelText("Financial relationships")).not.toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Add record" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add finding" })).not.toBeInTheDocument();
   expect(screen.queryByText("No project references added.")).not.toBeInTheDocument();
 
   screen.getByRole("button", { name: "Add content to Assessment" }).focus();
@@ -390,7 +393,7 @@ it("keeps unused secondary fields behind one section-level add menu", async () =
   screen.getByRole("button", { name: "Add content to Assessment" }).focus();
   await user.keyboard("{Enter}");
   await user.click(await screen.findByRole("menuitem", { name: "Structured findings table" }));
-  expect(screen.getByRole("button", { name: "Add record" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Add finding" })).toBeVisible();
 });
 
 it("confirms advisory readiness warnings without blocking publication", async () => {
@@ -748,6 +751,7 @@ it("offers contextual controls and project data only for compatible structured c
               "Status",
               "Linked identity",
               "Confidence",
+              "Evidence references",
             ],
           },
         ],
@@ -778,7 +782,7 @@ it("offers contextual controls and project data only for compatible structured c
   screen.getByRole("button", { name: "Add content to Site inventory" }).focus();
   await user.keyboard("{Enter}");
   await user.click(await screen.findByRole("menuitem", { name: "Sites table" }));
-  await user.click(screen.getByRole("button", { name: "Add record" }));
+  await user.click(screen.getByRole("button", { name: "Add site" }));
 
   expect(
     screen.getByRole("button", { name: "Choose project data for Sites row 1 Domain or site" }),
@@ -789,6 +793,9 @@ it("offers contextual controls and project data only for compatible structured c
   expect(
     screen.queryByRole("button", { name: "Choose project data for Sites row 1 Category" }),
   ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Choose project data for Sites row 1 Evidence references" }),
+  ).toBeVisible();
   expect(screen.getByLabelText("Sites row 1 First seen")).toHaveAttribute("type", "date");
   expect(screen.getByRole("combobox", { name: "Sites row 1 Status" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Sites row 1 Confidence" })).toBeVisible();
@@ -797,29 +804,52 @@ it("offers contextual controls and project data only for compatible structured c
   ).toBeNull();
 
   await user.type(screen.getByLabelText("Sites row 1 Domain or site"), "discarded.example");
-  const addDialog = screen.getByRole("dialog", { name: "Add Sites record" });
+  const addDialog = screen.getByRole("dialog", { name: "Add site" });
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   await waitForElementToBeRemoved(addDialog);
-  expect(screen.getByText("No records yet.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Add record" })).toHaveFocus();
+  expect(screen.getByText(/No sites added/u)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Add site" })).toHaveFocus();
 
-  await user.click(screen.getByRole("button", { name: "Add record" }));
+  await user.click(screen.getByRole("button", { name: "Add site" }));
   await user.type(screen.getByLabelText("Sites row 1 Domain or site"), "kept.example");
-  const savedDialog = screen.getByRole("dialog", { name: "Add Sites record" });
+  vi.mocked(listReportProjectData).mockResolvedValue([
+    {
+      kind: "evidence",
+      id: "21a6b93a-06ac-4f91-b0a3-46b58af592d1",
+      label: "Captured storefront",
+      objectType: "image/png",
+      summary: "Landing page capture",
+      values: { label: "Captured storefront" },
+    },
+  ]);
+  await user.click(
+    screen.getByRole("button", { name: "Choose project data for Sites row 1 Evidence references" }),
+  );
+  await user.click(await screen.findByRole("button", { name: "Captured storefront — image/png" }));
+  expect(screen.getByText("Linked to Captured storefront")).toBeVisible();
+  const savedDialog = screen.getByRole("dialog", { name: "Add site" });
   await user.click(screen.getByRole("button", { name: "Save record" }));
   await waitForElementToBeRemoved(savedDialog);
   expect(screen.getByText("kept.example")).toBeVisible();
+  expect(screen.getByText(/1 linked project reference/u)).toBeVisible();
 
-  await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.getByRole("heading", { name: "kept.example" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Edit site kept.example" }));
   await user.clear(screen.getByLabelText("Sites row 1 Domain or site"));
   await user.type(screen.getByLabelText("Sites row 1 Domain or site"), "discarded-edit.example");
-  const editDialog = screen.getByRole("dialog", { name: "Edit Sites record" });
+  const editDialog = screen.getByRole("dialog", { name: "Edit site" });
   await user.click(screen.getByRole("button", { name: "Cancel" }));
   await waitForElementToBeRemoved(editDialog);
   expect(screen.getByText("kept.example")).toBeVisible();
 
-  await user.click(screen.getByRole("button", { name: "Delete Sites record 1" }));
-  expect(screen.getByText("No records yet.")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Remove site kept.example" }));
+  expect(screen.getByRole("alertdialog", { name: "Remove site?" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByRole("heading", { name: "kept.example" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Remove site kept.example" }));
+  await user.click(screen.getByRole("button", { name: "Remove site" }));
+  expect(screen.getByText(/No sites added/u)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Add site" })).toHaveFocus();
 });
 
 it("makes incident timeline rows fill their container with readable controls", async () => {
@@ -865,7 +895,7 @@ it("makes incident timeline rows fill their container with readable controls", a
   screen.getByRole("button", { name: "Add content to Incident metadata" }).focus();
   await user.keyboard("{Enter}");
   await user.click(await screen.findByRole("menuitem", { name: "Incident timeline table" }));
-  await user.click(screen.getByRole("button", { name: "Add record" }));
+  await user.click(screen.getByRole("button", { name: "Add event" }));
 
   expect(screen.getByLabelText("Incident timeline row 1 Time")).toHaveClass(
     "guided-report-table-input",
@@ -882,11 +912,11 @@ it("makes incident timeline rows fill their container with readable controls", a
     }),
   ).toHaveTextContent("Choose evidence");
   await user.type(screen.getByLabelText("Incident timeline row 1 Event"), "Confirmed event");
-  const recordDialog = screen.getByRole("dialog", { name: "Add Incident timeline record" });
+  const recordDialog = screen.getByRole("dialog", { name: "Add event" });
   await user.click(screen.getByRole("button", { name: "Save record" }));
   await waitForElementToBeRemoved(recordDialog);
   expect(screen.getByText("Confirmed event")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Delete Incident timeline record 1" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "Remove event Confirmed event" })).toBeVisible();
 });
 
 it("renders the shared data-sources table with source-aware controls", async () => {
@@ -933,7 +963,7 @@ it("renders the shared data-sources table with source-aware controls", async () 
   await user.click(
     await screen.findByRole("menuitem", { name: "Data sources and citations table" }),
   );
-  await user.click(screen.getByRole("button", { name: "Add record" }));
+  await user.click(screen.getByRole("button", { name: "Add source" }));
 
   expect(screen.getByLabelText("Data sources and citations row 1 Source").tagName).toBe("TEXTAREA");
   expect(screen.getByLabelText("Data sources and citations row 1 Reference").tagName).toBe(
@@ -952,9 +982,7 @@ it("renders the shared data-sources table with source-aware controls", async () 
     }),
   ).toHaveTextContent("Choose source");
   await user.type(screen.getByLabelText("Data sources and citations row 1 Source"), "Source A");
-  const sourceDialog = screen.getByRole("dialog", {
-    name: "Add Data sources and citations record",
-  });
+  const sourceDialog = screen.getByRole("dialog", { name: "Add source" });
   await user.click(screen.getByRole("button", { name: "Save record" }));
   await waitForElementToBeRemoved(sourceDialog);
   expect(screen.getByText("Source A")).toBeVisible();

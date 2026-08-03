@@ -63,10 +63,20 @@ export interface ProjectDataSelection extends ProjectDataReference {
   values: Record<string, string>;
 }
 
+export interface GuidedReportRowReference {
+  rowIndex: number;
+  column: string;
+  reference: ProjectDataReference;
+}
+
 export type GuidedReportFieldValue =
   | { type: "text"; value: string }
   | { type: "narrative"; value: DocumentRoot }
   | { type: "rows"; value: Array<Record<string, string>> }
+  | {
+      type: "linked_rows";
+      value: { rows: Array<Record<string, string>>; references: GuidedReportRowReference[] };
+    }
   | { type: "project_references"; value: ProjectDataReference[] };
 
 export interface GuidedReport {

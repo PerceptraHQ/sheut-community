@@ -840,6 +840,7 @@ export const REPORT_HELP_TOPICS: readonly ReportHelpTopic[] = [
       "Turn unanswered questions into linked intelligence gaps and requirements, then build the timeline and ecosystem overview.",
       "Add identity, social-profile, site, infrastructure, certificate, relationship, media, and observable records one at a time; Cancel leaves the report unchanged.",
       "Insert existing STIX objects, ATT&CK observations, and encrypted Evidence where they add reusable project context; leave unsupported optional sections empty.",
+      "Evidence selected in a structured record or inserted as an image is indexed once under Evidence index, with source metadata, analyst notes, citing sections, and the image itself when applicable.",
       "Review Empty, In progress, Ready, and Not applicable states, then publish with the release version and TLP handling marking. Empty content disappears from the output and table of contents.",
     ],
     fieldGuidance: [
@@ -847,6 +848,8 @@ export const REPORT_HELP_TOPICS: readonly ReportHelpTopic[] = [
       "Methodology: distinguish facts, source reporting, independent corroboration, technical observations, evidence preservation, limitations, and confidence definitions.",
       "Analysis: keep assessment, intelligence gaps, requirements, and recommendations distinct. Do not merge an alleged identity with an OSINT match or a recommended financial inquiry with a current finding.",
       "Relationships: state source, relationship, target, basis, confidence, corroboration, and evidence. Graph links remain visual unless explicitly validated as STIX relationships.",
+      "Evidence appendix: use Evidence analysis and explanatory figures for analyst-authored context, image captions, or an exported STIX graph view. The graph explains the model but does not prove a relationship; cite the supporting Evidence separately.",
+      "Publication: empty structured columns disappear; short comparable records remain tables, while dense intelligence records become readable labelled cards instead of tiny wide tables.",
       "ATT&CK and detections are conditional and may be marked Not applicable. Leave them empty unless the behavior or rule is defensible; no empty heading is published.",
       "Readiness recommendations are advisory. Publishing lists missing recommended content for confirmation, while malformed supplied values and an empty title remain hard errors.",
     ],

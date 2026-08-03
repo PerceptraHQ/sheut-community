@@ -61,6 +61,13 @@ a STIX object merely to record an analyst observation.
 - Whitespace-only fields, all-blank table rows, empty project references, and
   the resulting empty sections do not appear in Publish, the table of contents,
   HTML, DOCX, or PDF.
+- Publication keeps short, genuinely comparable data in tables. It removes
+  columns that are empty across every record and publishes dense intelligence
+  records as labelled field/value cards instead of shrinking a wide schema to
+  unreadable text. The three-field ATT&CK mapping remains a concise table.
+- An Evidence project reference or evidence image selected in any published
+  section remains next to the relevant analysis and is also listed once under
+  **Evidence index**, together with every section that cites it.
 - Section headings are not numbered. PDF and DOCX tables of contents show page
   numbers; HTML uses accessible links because screen pages are fluid.
 - Empty optional sections are normal. Do not add filler text merely to make a
@@ -307,10 +314,19 @@ Each row contains **Action**, **Priority**, **Intended recipient**, **Rationale*
 
 ### Evidence Appendix
 
-The index contains **Evidence ID**, **Description**, **Source**, **Collected**,
-**SHA-256**, and **Appendix reference**. Use Appendix A, Appendix B, … Appendix Z,
-Appendix AA, and so on. Add chain-of-custody notes when transfer, extraction, or
-handling details matter, and insert the encrypted project evidence references.
+Sheut builds **Evidence index** from the encrypted Evidence records and images
+cited throughout the report. Use **Evidence analysis and explanatory figures**
+for extracts, analyst notes, methodology, image captions, and an exported STIX
+graph view that helps explain the assessment. A graph figure illustrates the
+analytical model; visual links do not become STIX Relationships and the
+underlying claims still need linked evidence. Add chain-of-custody notes when
+transfer, extraction, or handling details matter.
+
+Each indexed item includes the useful non-empty Evidence metadata available at
+publication time: media type, description, source, capture date, SHA-256,
+clearly labelled analyst notes, and the sections that cite it. Image evidence
+linked from a structured record is reproduced in the appendix; documents,
+video, and archives remain metadata-backed references rather than fake images.
 
 Images preserve their aspect ratio and are bounded to the printable page so
 they do not overlap headers or footers. Give each image a useful caption and
