@@ -135,7 +135,7 @@ impl CommandError {
         Self { code }
     }
 
-    const fn storage_unavailable() -> Self {
+    pub(crate) const fn storage_unavailable() -> Self {
         Self::new(LifecycleErrorCode::StorageUnavailable)
     }
 }

@@ -15,6 +15,7 @@ import type { CreateProjectRequest } from "./components/CreateProjectDialog";
 import { ProjectExplorer } from "./components/ProjectExplorer";
 import { ProjectLauncher } from "./components/ProjectLauncher";
 import type { SettingsSectionId } from "./components/SettingsWorkspace";
+import { TelemetryConsentDialog } from "./components/TelemetryConsentDialog";
 import { useVaultNotices, VaultNoticeProvider } from "./components/VaultNotices";
 import { WorkspaceErrorBoundary } from "./components/WorkspaceErrorBoundary";
 import { WorkspaceLoadingState } from "./components/WorkspaceState";
@@ -44,6 +45,13 @@ import {
   unlockProject,
 } from "./lib/projects";
 import type { ReportHelpTopicId } from "./lib/reportHelp";
+import {
+  getTelemetryPreference,
+  recordTelemetryEvent,
+  setTelemetryPreference,
+  type TelemetryEventName,
+  type TelemetryPreference,
+} from "./lib/telemetry";
 import { saveWorkbenchLayout, type WorkbenchLayoutPreferences } from "./lib/workbenchLayout";
 
 const loadInvestigationsWorkspace = () => import("./components/InvestigationsWorkspace");
@@ -81,6 +89,15 @@ const SettingsWorkspace = lazy(async () => ({
 }));
 
 type WorkspaceView = SearchDestination;
+
+const VIEW_TELEMETRY_EVENTS: Partial<Record<WorkspaceView, TelemetryEventName>> = {
+  investigations: "investigations_opened",
+  intelligence: "intelligence_opened",
+  evidence: "evidence_opened",
+  graph: "graph_opened",
+  mitre: "mitre_opened",
+  settings: "settings_opened",
+};
 
 function Workbench() {
   const notices = useVaultNotices();
@@ -120,6 +137,9 @@ function Workbench() {
     secondarySideBarPosition: "right",
     secondarySideBarVisible: true,
   });
+  const [telemetryPreference, setTelemetryPreferenceState] =
+    useState<TelemetryPreference | null>(null);
+  const applicationStartedReported = useRef(false);
   const panelStateBeforeGraphFocus = useRef({ explorer: false, inspector: false });
   const explorerCollapsedRef = useRef(explorerCollapsed);
   const inspectorCollapsedRef = useRef(inspectorCollapsed);
@@ -133,15 +153,22 @@ function Workbench() {
   const handleWorkspaceActionHandled = useCallback((requestKey: number) => {
     setWorkspaceActionRequest((current) => (current?.requestKey === requestKey ? null : current));
   }, []);
-  const handleSelectView = useCallback((view: WorkspaceView) => {
-    setActiveView(view);
-    if (view !== "investigations") {
-      setSelectedDocument(null);
-      setExternallyRestoredDocument(null);
-    }
-    if (view !== "mitre") setSelectedMitreTechnique(null);
-    if (view !== "graph") setSelectedGraphItem(null);
-  }, []);
+  const handleSelectView = useCallback(
+    (view: WorkspaceView) => {
+      setActiveView(view);
+      const eventName = VIEW_TELEMETRY_EVENTS[view];
+      if (telemetryPreference?.consent === "enabled" && eventName) {
+        void recordTelemetryEvent(eventName);
+      }
+      if (view !== "investigations") {
+        setSelectedDocument(null);
+        setExternallyRestoredDocument(null);
+      }
+      if (view !== "mitre") setSelectedMitreTechnique(null);
+      if (view !== "graph") setSelectedGraphItem(null);
+    },
+    [telemetryPreference?.consent],
+  );
 
   const handleGraphFocusModeChange = useCallback((active: boolean) => {
     setGraphFocusMode(active);
@@ -174,12 +201,49 @@ function Workbench() {
 
   useEffect(() => {
     let active = true;
+    getTelemetryPreference()
+      .then((preference) => {
+        if (active) setTelemetryPreferenceState(preference);
+      })
+      .catch(() => {
+        if (active) setTelemetryPreferenceState({ consent: "disabled" });
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (telemetryPreference?.consent !== "enabled") return;
+    if (!applicationStartedReported.current) {
+      applicationStartedReported.current = true;
+      void recordTelemetryEvent("application_started");
+    }
+    const reportUnhandledError = () => {
+      void recordTelemetryEvent("webview_unhandled_error");
+    };
+    const reportUnhandledRejection = () => {
+      void recordTelemetryEvent("webview_unhandled_rejection");
+    };
+    window.addEventListener("error", reportUnhandledError);
+    window.addEventListener("unhandledrejection", reportUnhandledRejection);
+    return () => {
+      window.removeEventListener("error", reportUnhandledError);
+      window.removeEventListener("unhandledrejection", reportUnhandledRejection);
+    };
+  }, [telemetryPreference?.consent]);
+
+  useEffect(() => {
+    let active = true;
     listProjects()
       .then((discovered) => {
         if (active) setProjects(discovered);
       })
       .catch((cause: unknown) => {
-        if (active) setLoadError(projectErrorMessage(cause));
+        if (active) {
+          setLoadError(projectErrorMessage(cause));
+          void recordTelemetryEvent("project_list_failed");
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -187,6 +251,11 @@ function Workbench() {
     return () => {
       active = false;
     };
+  }, []);
+
+  const handleTelemetryPreferenceChange = useCallback(async (enabled: boolean) => {
+    const preference = await setTelemetryPreference(enabled);
+    setTelemetryPreferenceState(preference);
   }, []);
 
   useEffect(() => {
@@ -218,6 +287,7 @@ function Workbench() {
       created,
     ]);
     setCurrentProject(created);
+    void recordTelemetryEvent("project_created");
     handleSelectView("overview");
     notices.add({
       title: "Project created",
@@ -232,6 +302,7 @@ function Workbench() {
       existing.map((project) => (project.id === unlocked.id ? unlocked : project)),
     );
     setCurrentProject(unlocked);
+    void recordTelemetryEvent("project_unlocked");
     handleSelectView("overview");
     notices.add({
       title: "Project unlocked",
@@ -246,6 +317,7 @@ function Workbench() {
       existing.map((project) => (project.id === unlocked.id ? unlocked : project)),
     );
     setCurrentProject(unlocked);
+    void recordTelemetryEvent("project_unlocked");
     handleSelectView("overview");
     notices.add({
       title: "Project unlocked",
@@ -584,6 +656,7 @@ function Workbench() {
             <WorkspaceErrorBoundary
               key={`${currentProject?.id ?? "none"}-${activeView}`}
               onLeave={() => handleSelectView("overview")}
+              onReport={(eventName) => void recordTelemetryEvent(eventName)}
             >
               {currentProject && activeView === "investigations" ? (
                 <Suspense
@@ -682,6 +755,8 @@ function Workbench() {
                     initialSection={settingsRequest.section}
                     layout={workbenchLayout}
                     onLayoutChange={setWorkbenchLayout}
+                    telemetryConsent={telemetryPreference?.consent ?? "disabled"}
+                    onTelemetryPreferenceChange={handleTelemetryPreferenceChange}
                     projectId={currentProject?.id}
                     projectName={currentProject?.name ?? undefined}
                   />
@@ -766,6 +841,9 @@ function Workbench() {
             }}
           />
         </Suspense>
+      ) : null}
+      {telemetryPreference?.consent === "unknown" ? (
+        <TelemetryConsentDialog onDecision={handleTelemetryPreferenceChange} />
       ) : null}
     </div>
   );

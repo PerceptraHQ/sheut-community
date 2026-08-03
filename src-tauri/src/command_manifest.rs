@@ -1,4 +1,7 @@
 pub const COMMAND_NAMES: &[&str] = &[
+    "get_telemetry_preference",
+    "set_telemetry_preference",
+    "record_telemetry_event",
     "list_projects",
     "list_graph_workspaces",
     "list_graph_source_items",
