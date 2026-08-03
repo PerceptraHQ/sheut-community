@@ -40,9 +40,18 @@
       }
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/PerceptraHQ/sheut-community/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaW5pIHB1YmxpYyBrZXk6IEVFRjdDMzUzODAyQTdCNjAKUldSZ2V5cUFVOFAzN2o0TTdMbDQ0L0J0aFZ1OHRpRWdjZzdkRXB6STdkclduOERGTDRLbXJidDAK"
+    }
+  },
   "bundle": {
     "active": true,
     "category": "Business",
+    "createUpdaterArtifacts": true,
     "shortDescription": "Local-first cyber threat intelligence workbench",
     "longDescription": "Sheut helps analysts structure STIX intelligence, investigate threats visually, and produce reports while keeping community projects local-first.",
     "targets": "all",

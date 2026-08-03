@@ -1,0 +1,127 @@
+name: Prepare update draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag matching the application version
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    environment: release
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS Apple Silicon
+            runner: macos-15
+            args: --bundles dmg
+          - label: macOS Intel
+            runner: macos-15-intel
+            args: --bundles dmg
+          - label: Windows x64
+            runner: windows-2025
+            args: --config src-tauri/tauri.windows.signing.conf.json --bundles nsis,msi
+          - label: Linux x64
+            runner: ubuntu-24.04
+            args: --bundles appimage,deb
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version
+
+      - name: Enable pinned package manager
+        run: corepack enable
+
+      - name: Install Linux package dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends \
+            build-essential \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf
+
+      - name: Install JavaScript dependencies
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Select pinned Rust toolchain
+        run: rustup show active-toolchain
+
+      - name: Verify release tag and application version
+        run: node scripts/check-release-tag.mjs "${{ inputs.tag }}"
+
+      - name: Sign in to Azure for Windows publisher signing
+        if: runner.os == 'Windows'
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Azure Artifact Signing client
+        if: runner.os == 'Windows'
+        run: cargo install artifact-signing-cli --locked --version 0.11.0
+
+      - name: Prepare Windows publisher signing
+        if: runner.os == 'Windows'
+        env:
+          AZURE_ARTIFACT_SIGNING_ACCOUNT: ${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}
+          AZURE_ARTIFACT_SIGNING_ENDPOINT: ${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}
+          AZURE_ARTIFACT_SIGNING_PROFILE: ${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}
+        run: node scripts/create-windows-signing-config.mjs
+
+      - name: Build release and prepare update information
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          CARGO_BUILD_JOBS: "2"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOMAXPROCS: "2"
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          UV_THREADPOOL_SIZE: "2"
+        with:
+          args: ${{ matrix.args }}
+          generateReleaseNotes: true
+          includeUpdaterJson: true
+          prerelease: false
+          releaseDraft: true
+          releaseName: Sheut ${{ inputs.tag }}
+          tagName: ${{ inputs.tag }}
+          updaterJsonPreferNsis: true

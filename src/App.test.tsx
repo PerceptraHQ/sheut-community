@@ -6,6 +6,8 @@ import "./components/InvestigationsWorkspace";
 import * as documentsApi from "./lib/documents";
 import * as guidedReportsApi from "./lib/guided-reports";
 import * as projectsApi from "./lib/projects";
+import * as softwareUpdatePreferencesApi from "./lib/softwareUpdatePreferences";
+import * as softwareUpdatesApi from "./lib/softwareUpdates";
 import * as telemetryApi from "./lib/telemetry";
 
 vi.mock("./lib/documents", async (importOriginal) => {
@@ -65,6 +67,25 @@ vi.mock("./lib/telemetry", async (importOriginal) => {
   };
 });
 
+vi.mock("./lib/softwareUpdates", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/softwareUpdates")>();
+  return {
+    ...actual,
+    checkForSoftwareUpdate: vi.fn(),
+    dismissSoftwareUpdate: vi.fn(),
+    installSoftwareUpdate: vi.fn(),
+  };
+});
+
+vi.mock("./lib/softwareUpdatePreferences", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/softwareUpdatePreferences")>();
+  return {
+    ...actual,
+    getSoftwareUpdateConsent: vi.fn(),
+    setSoftwareUpdateConsent: vi.fn(),
+  };
+});
+
 const PROJECT_ID = "019b0dc2-34c8-7c31-a2e5-c447222ce0b9";
 const CAMPAIGN_TEMPLATE_ID = "4c8680ad-3f8c-53df-b94d-405cb3dc231f";
 const campaignTemplate: guidedReportsApi.ReportTemplateDefinition = {
@@ -112,6 +133,15 @@ describe("App", () => {
       .mockResolvedValue({ consent: "disabled" });
     vi.mocked(telemetryApi.recordTelemetryEvent).mockReset().mockResolvedValue(false);
     vi.mocked(telemetryApi.setTelemetryPreference).mockReset();
+    vi.mocked(softwareUpdatesApi.checkForSoftwareUpdate).mockReset().mockResolvedValue(null);
+    vi.mocked(softwareUpdatesApi.dismissSoftwareUpdate).mockReset().mockResolvedValue();
+    vi.mocked(softwareUpdatePreferencesApi.getSoftwareUpdateConsent)
+      .mockReset()
+      .mockReturnValue("disabled");
+    vi.mocked(softwareUpdatesApi.installSoftwareUpdate).mockReset().mockResolvedValue();
+    vi.mocked(softwareUpdatePreferencesApi.setSoftwareUpdateConsent)
+      .mockReset()
+      .mockReturnValue("disabled");
   });
 
   it("asks for telemetry consent once and keeps collection off by default", async () => {
@@ -131,6 +161,53 @@ describe("App", () => {
     expect(
       screen.queryByRole("dialog", { name: "Anonymous diagnostics and usage" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("asks before enabling launch-time update checks", async () => {
+    const user = userEvent.setup();
+    vi.mocked(softwareUpdatePreferencesApi.getSoftwareUpdateConsent).mockReturnValue("unknown");
+    vi.mocked(softwareUpdatePreferencesApi.setSoftwareUpdateConsent).mockReturnValue("enabled");
+
+    render(<App />);
+
+    const dialog = await screen.findByRole("dialog", { name: "Keep Sheut up to date" });
+    expect(within(dialog).getByText(/no project, report, graph, evidence/i)).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Check automatically" }));
+
+    await waitFor(() => {
+      expect(softwareUpdatePreferencesApi.setSoftwareUpdateConsent).toHaveBeenCalledWith(true);
+      expect(softwareUpdatesApi.checkForSoftwareUpdate).toHaveBeenCalledOnce();
+    });
+    expect(screen.queryByRole("dialog", { name: "Keep Sheut up to date" })).not.toBeInTheDocument();
+  });
+
+  it("checks once on launch and asks before installing an available update", async () => {
+    const user = userEvent.setup();
+    vi.mocked(softwareUpdatePreferencesApi.getSoftwareUpdateConsent).mockReturnValue("enabled");
+    vi.mocked(softwareUpdatesApi.checkForSoftwareUpdate).mockResolvedValue({
+      currentVersion: "0.1.0",
+      version: "0.1.1",
+      notes: "Improved report editing.",
+    });
+
+    render(<App />);
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "A Sheut update is available",
+    });
+    expect(within(dialog).getByRole("button", { name: "Update and restart" })).toBeEnabled();
+    expect(softwareUpdatesApi.checkForSoftwareUpdate).toHaveBeenCalledOnce();
+    expect(softwareUpdatesApi.installSoftwareUpdate).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole("button", { name: "Update and restart" }));
+    await waitFor(() => expect(softwareUpdatesApi.installSoftwareUpdate).toHaveBeenCalledOnce());
+  });
+
+  it("does not contact the update service when launch checks are off", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Open project" })).toBeVisible();
+    expect(softwareUpdatesApi.checkForSoftwareUpdate).not.toHaveBeenCalled();
   });
 
   it("renders a compact desktop workbench while locked", async () => {

@@ -72,6 +72,36 @@ describe("SettingsWorkspace", () => {
     expect(onTelemetryPreferenceChange).toHaveBeenCalledWith(false);
   });
 
+  it("keeps launch-time update checks under user control", async () => {
+    const user = userEvent.setup();
+    const onSoftwareUpdateConsentChange = vi.fn().mockResolvedValue(undefined);
+    const onCheckForSoftwareUpdate = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SettingsWorkspace
+        layout={DEFAULT_WORKBENCH_LAYOUT}
+        onLayoutChange={vi.fn()}
+        softwareUpdateConsent="enabled"
+        softwareUpdateStatus="current"
+        onSoftwareUpdateConsentChange={onSoftwareUpdateConsentChange}
+        onCheckForSoftwareUpdate={onCheckForSoftwareUpdate}
+      />,
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Data & security" }));
+    const automaticChecks = screen.getByRole("switch", {
+      name: "Check for updates when Sheut starts",
+    });
+    expect(automaticChecks).toBeChecked();
+    expect(screen.getByText(/does not include anything from your projects/i)).toBeVisible();
+    expect(screen.getByText("Sheut is up to date.")).toBeVisible();
+
+    await user.click(automaticChecks);
+    await user.click(screen.getByRole("button", { name: "Check now" }));
+
+    expect(onSoftwareUpdateConsentChange).toHaveBeenCalledWith(false);
+    expect(onCheckForSoftwareUpdate).toHaveBeenCalledOnce();
+  });
+
   it("exposes project-local Brand Studio only when a project is open", async () => {
     const user = userEvent.setup();
     render(

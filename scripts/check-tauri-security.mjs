@@ -12,6 +12,17 @@ const capability = JSON.parse(
 const commandManifest = await readFile(resolve(tauriDirectory, "src/command_manifest.rs"), "utf8");
 const rustEntryPoint = await readFile(resolve(tauriDirectory, "src/lib.rs"), "utf8");
 const isolationSource = await readFile(resolve(tauriDirectory, "isolation/index.js"), "utf8");
+const previewConfig = JSON.parse(
+  await readFile(resolve(tauriDirectory, "tauri.preview.conf.json"), "utf8"),
+);
+const previewWorkflow = await readFile(
+  resolve(repository, ".github/workflows/preview-packages.yml"),
+  "utf8",
+);
+const releaseWorkflow = await readFile(
+  resolve(repository, ".github/workflows/release.yml"),
+  "utf8",
+);
 const viteConfigSource = await readFile(resolve(repository, "vite.config.ts"), "utf8");
 const expectedSecurityHeaders = {
   "Cross-Origin-Opener-Policy": "same-origin",
@@ -48,6 +59,26 @@ const expectedWindowPermissions = new Set([
   "core:window:allow-start-dragging",
   "core:window:allow-toggle-maximize",
 ]);
+const expectedUpdaterPermissions = new Set([
+  "updater:allow-check",
+  "updater:allow-download-and-install",
+]);
+const updaterPermissions = new Set(
+  capability.permissions.filter(
+    (permission) => typeof permission === "string" && permission.startsWith("updater:"),
+  ),
+);
+const expectedProcessPermissions = new Set(["process:allow-restart"]);
+const processPermissions = new Set(
+  capability.permissions.filter(
+    (permission) => typeof permission === "string" && permission.startsWith("process:"),
+  ),
+);
+const resourcePermissions = new Set(
+  capability.permissions.filter(
+    (permission) => typeof permission === "string" && permission.startsWith("core:resources:"),
+  ),
+);
 const openerPermission = capability.permissions.find(
   (permission) =>
     typeof permission === "object" && permission?.identifier === "opener:allow-open-url",
@@ -75,6 +106,15 @@ if (config.app.windows?.length !== 1 || config.app.windows[0]?.decorations !== f
 if (!setsEqual(windowPermissions, expectedWindowPermissions)) {
   throw new Error("Custom title bar permissions differ from the reviewed window action set");
 }
+if (!setsEqual(updaterPermissions, expectedUpdaterPermissions)) {
+  throw new Error("Updater permissions differ from the reviewed check-and-install set");
+}
+if (!setsEqual(processPermissions, expectedProcessPermissions)) {
+  throw new Error("Process permissions must permit restart only");
+}
+if (!setsEqual(resourcePermissions, new Set(["core:resources:allow-close"]))) {
+  throw new Error("Updater resources must be closeable without broader resource access");
+}
 if (config.app.security.freezePrototype !== true)
   throw new Error("Prototype freezing must stay enabled");
 if (config.app.security.dangerousDisableAssetCspModification !== false) {
@@ -97,6 +137,56 @@ if (!setsEqual(new Set(capability.platforms), new Set(["linux", "macOS", "window
 }
 if (config.bundle.resources?.["../THIRD_PARTY_NOTICES.md"] !== "THIRD_PARTY_NOTICES.md") {
   throw new Error("Packaged applications must include third-party notices");
+}
+if (config.bundle.createUpdaterArtifacts !== true) {
+  throw new Error("Release builds must create signed Tauri updater artifacts");
+}
+const updaterConfig = config.plugins?.updater;
+if (
+  JSON.stringify(updaterConfig?.endpoints) !==
+    JSON.stringify([
+      "https://github.com/PerceptraHQ/sheut-community/releases/latest/download/latest.json",
+    ]) ||
+  typeof updaterConfig?.pubkey !== "string" ||
+  updaterConfig.pubkey.trim().length < 40
+) {
+  throw new Error("Updater trust must use the reviewed GitHub endpoint and an embedded public key");
+}
+if (
+  previewConfig.bundle?.createUpdaterArtifacts !== false ||
+  (previewWorkflow.match(/--config src-tauri\/tauri\.preview\.conf\.json/gu)?.length ?? 0) !== 2
+) {
+  throw new Error("Unverified preview builds must not create release updater artifacts");
+}
+for (const required of [
+  "environment: release",
+  "workflow_dispatch:",
+  "inputs.tag",
+  "id-token: write",
+  "azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43",
+  "cargo install artifact-signing-cli --locked --version 0.11.0",
+  "node scripts/create-windows-signing-config.mjs",
+  "APPLE_CERTIFICATE:",
+  "secrets.APPLE_CERTIFICATE",
+  "tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5",
+  "TAURI_SIGNING_PRIVATE_KEY:",
+  "secrets.TAURI_SIGNING_PRIVATE_KEY",
+  "TAURI_SIGNING_PRIVATE_KEY_PASSWORD:",
+  "secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD",
+  "releaseDraft: true",
+]) {
+  if (!releaseWorkflow.includes(required)) {
+    throw new Error(`Release workflow is missing the reviewed control: ${required}`);
+  }
+}
+if (/pull_request:|push:/u.test(releaseWorkflow)) {
+  throw new Error("Publisher signing must stay behind a deliberate manual release dispatch");
+}
+if (
+  !rustEntryPoint.includes("tauri_plugin_updater::Builder::new().build()") ||
+  !rustEntryPoint.includes("tauri_plugin_process::init()")
+) {
+  throw new Error("Updater and restart plugins must be explicitly registered");
 }
 if (JSON.stringify(config.app.security.headers) !== JSON.stringify(expectedSecurityHeaders)) {
   throw new Error("Production security headers differ from the reviewed policy");
@@ -144,6 +234,13 @@ for (const request of [
   { cmd: "plugin:window|is_fullscreen", payload: { label: "main" } },
   { cmd: "plugin:window|set_fullscreen", payload: { label: "main", value: true } },
   { cmd: "plugin:window|start_dragging", payload: { label: "main" } },
+  { cmd: "plugin:updater|check", payload: {} },
+  {
+    cmd: "plugin:updater|download_and_install",
+    payload: { onEvent: "__CHANNEL__:42", rid: 7 },
+  },
+  { cmd: "plugin:process|restart", payload: {} },
+  { cmd: "plugin:resources|close", payload: { rid: 7 } },
 ]) {
   hook({ ...request, callback: 1, error: 2, options: {} });
 }
@@ -159,6 +256,13 @@ for (const rejected of [
   { cmd: "plugin:window|close", payload: { label: "other" } },
   { cmd: "plugin:window|maximize", payload: { label: "main" } },
   { cmd: "plugin:window|set_fullscreen", payload: { label: "main", value: "true" } },
+  { cmd: "plugin:updater|check", payload: { target: "attacker-controlled" } },
+  {
+    cmd: "plugin:updater|download_and_install",
+    payload: { onEvent: "__CHANNEL__:42", rid: -1 },
+  },
+  { cmd: "plugin:updater|download", payload: { onEvent: "__CHANNEL__:42", rid: 7 } },
+  { cmd: "plugin:process|exit", payload: { code: 0 } },
   { cmd: "plugin:opener|open_url", payload: { url: "https://attacker.invalid", with: null } },
   {
     cmd: "plugin:opener|open_url",

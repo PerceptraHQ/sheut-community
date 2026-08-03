@@ -14,7 +14,7 @@ import { ActivityRail } from "./components/ActivityRail";
 import type { CreateProjectRequest } from "./components/CreateProjectDialog";
 import { ProjectExplorer } from "./components/ProjectExplorer";
 import { ProjectLauncher } from "./components/ProjectLauncher";
-import type { SettingsSectionId } from "./components/SettingsWorkspace";
+import type { SettingsSectionId, SoftwareUpdateStatus } from "./components/SettingsWorkspace";
 import { useVaultNotices, VaultNoticeProvider } from "./components/VaultNotices";
 import { WorkspaceErrorBoundary } from "./components/WorkspaceErrorBoundary";
 import { WorkspaceLoadingState } from "./components/WorkspaceState";
@@ -44,6 +44,8 @@ import {
   unlockProject,
 } from "./lib/projects";
 import type { ReportHelpTopicId } from "./lib/reportHelp";
+import type { SoftwareUpdateConsent } from "./lib/softwareUpdatePreferences";
+import type { SoftwareUpdateProgress, SoftwareUpdateSummary } from "./lib/softwareUpdates";
 import {
   getTelemetryPreference,
   recordTelemetryEvent,
@@ -89,6 +91,7 @@ const SettingsWorkspace = lazy(async () => ({
 const TelemetryConsentDialog = lazy(async () => ({
   default: (await import("./components/TelemetryConsentDialog")).TelemetryConsentDialog,
 }));
+const SoftwareUpdateDialogs = lazy(() => import("./components/SoftwareUpdateDialogs"));
 
 type WorkspaceView = SearchDestination;
 
@@ -144,6 +147,10 @@ function Workbench() {
   const [telemetryPreference, setTelemetryPreferenceState] = useState<TelemetryPreference | null>(
     null,
   );
+  const [softwareUpdateConsent, setSoftwareUpdateConsentState] =
+    useState<SoftwareUpdateConsent | null>(null);
+  const [softwareUpdate, setSoftwareUpdate] = useState<SoftwareUpdateSummary | null>(null);
+  const [softwareUpdateStatus, setSoftwareUpdateStatus] = useState<SoftwareUpdateStatus>("idle");
   const applicationStartedReported = useRef(false);
   const currentProjectRef = useRef<ProjectSummary | null>(null);
   const panelStateBeforeGraphFocus = useRef({ explorer: false, inspector: false });
@@ -231,6 +238,18 @@ function Workbench() {
     setInspectorCollapsed(false);
   }, []);
 
+  const handleCheckForSoftwareUpdate = useCallback(async () => {
+    setSoftwareUpdateStatus("checking");
+    try {
+      const { checkForSoftwareUpdate } = await import("./lib/softwareUpdates");
+      const available = await checkForSoftwareUpdate();
+      setSoftwareUpdate(available);
+      setSoftwareUpdateStatus(available ? "available" : "current");
+    } catch {
+      setSoftwareUpdateStatus("error");
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
     getTelemetryPreference()
@@ -240,10 +259,16 @@ function Workbench() {
       .catch(() => {
         if (active) setTelemetryPreferenceState({ consent: "disabled" });
       });
+    void import("./lib/softwareUpdatePreferences").then(({ getSoftwareUpdateConsent }) => {
+      if (!active) return;
+      const consent = getSoftwareUpdateConsent();
+      setSoftwareUpdateConsentState(consent);
+      if (consent === "enabled") void handleCheckForSoftwareUpdate();
+    });
     return () => {
       active = false;
     };
-  }, []);
+  }, [handleCheckForSoftwareUpdate]);
 
   useEffect(() => {
     if (telemetryPreference?.consent !== "enabled") return;
@@ -288,6 +313,37 @@ function Workbench() {
   const handleTelemetryPreferenceChange = useCallback(async (enabled: boolean) => {
     const preference = await setTelemetryPreference(enabled);
     setTelemetryPreferenceState(preference);
+  }, []);
+
+  const handleSoftwareUpdateConsentChange = useCallback(
+    async (enabled: boolean) => {
+      const { setSoftwareUpdateConsent } = await import("./lib/softwareUpdatePreferences");
+      setSoftwareUpdateConsentState(setSoftwareUpdateConsent(enabled));
+      if (enabled) await handleCheckForSoftwareUpdate();
+    },
+    [handleCheckForSoftwareUpdate],
+  );
+
+  const handleInstallSoftwareUpdate = useCallback(
+    async (onProgress: (progress: SoftwareUpdateProgress) => void) => {
+      setSoftwareUpdateStatus("installing");
+      try {
+        const { installSoftwareUpdate } = await import("./lib/softwareUpdates");
+        await installSoftwareUpdate(onProgress);
+      } catch (cause) {
+        setSoftwareUpdateStatus("available");
+        throw cause;
+      }
+    },
+    [],
+  );
+
+  const handleDismissSoftwareUpdate = useCallback(() => {
+    setSoftwareUpdate(null);
+    setSoftwareUpdateStatus("idle");
+    void import("./lib/softwareUpdates")
+      .then(({ dismissSoftwareUpdate }) => dismissSoftwareUpdate())
+      .catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -824,7 +880,12 @@ function Workbench() {
                     initialHelpTopic={settingsRequest.helpTopic}
                     initialSection={settingsRequest.section}
                     layout={workbenchLayout}
+                    onCheckForSoftwareUpdate={handleCheckForSoftwareUpdate}
                     onLayoutChange={setWorkbenchLayout}
+                    onSoftwareUpdateConsentChange={handleSoftwareUpdateConsentChange}
+                    softwareUpdate={softwareUpdate}
+                    softwareUpdateConsent={softwareUpdateConsent ?? "disabled"}
+                    softwareUpdateStatus={softwareUpdateStatus}
                     telemetryConsent={telemetryPreference?.consent ?? "disabled"}
                     onTelemetryPreferenceChange={handleTelemetryPreferenceChange}
                     projectId={currentProject?.id}
@@ -916,6 +977,21 @@ function Workbench() {
       {telemetryPreference?.consent === "unknown" ? (
         <Suspense fallback={null}>
           <TelemetryConsentDialog onDecision={handleTelemetryPreferenceChange} />
+        </Suspense>
+      ) : null}
+      {(telemetryPreference &&
+        telemetryPreference.consent !== "unknown" &&
+        softwareUpdateConsent === "unknown") ||
+      softwareUpdate ? (
+        <Suspense fallback={null}>
+          <SoftwareUpdateDialogs
+            askForConsent={softwareUpdateConsent === "unknown"}
+            installing={softwareUpdateStatus === "installing"}
+            onConsentDecision={handleSoftwareUpdateConsentChange}
+            onInstall={handleInstallSoftwareUpdate}
+            onLater={handleDismissSoftwareUpdate}
+            update={softwareUpdate}
+          />
         </Suspense>
       ) : null}
     </div>

@@ -62,6 +62,9 @@
   const utf8 = new TextEncoder();
 
   const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+  const isEmptyRecord = (value) => isRecord(value) && Object.keys(value).length === 0;
+  const isResourceId = (value) => Number.isSafeInteger(value) && value >= 0;
+  const isChannel = (value) => typeof value === "string" && /^__CHANNEL__:\d+$/.test(value);
   const isId = (value) => typeof value === "string" && canonicalId.test(value);
   const isBoundedString = (value, minimum, maximum) =>
     typeof value === "string" &&
@@ -658,6 +661,31 @@
         !isRecord(request.payload) ||
         !isApprovedMitreUrl(request.payload.url) ||
         (request.payload.with !== undefined && request.payload.with !== null)
+      ) {
+        throw new Error("IPC request rejected");
+      }
+      return request;
+    }
+    if (request.cmd === "plugin:updater|check" || request.cmd === "plugin:process|restart") {
+      if (!isEmptyRecord(request.payload)) throw new Error("IPC request rejected");
+      return request;
+    }
+    if (request.cmd === "plugin:updater|download_and_install") {
+      if (
+        !isRecord(request.payload) ||
+        Object.keys(request.payload).length !== 2 ||
+        !isChannel(request.payload.onEvent) ||
+        !isResourceId(request.payload.rid)
+      ) {
+        throw new Error("IPC request rejected");
+      }
+      return request;
+    }
+    if (request.cmd === "plugin:resources|close") {
+      if (
+        !isRecord(request.payload) ||
+        Object.keys(request.payload).length !== 1 ||
+        !isResourceId(request.payload.rid)
       ) {
         throw new Error("IPC request rejected");
       }

@@ -7,6 +7,8 @@ import { ToggleGroup } from "@base-ui/react/toggle-group";
 import { useState } from "react";
 import thirdPartyNotices from "../../THIRD_PARTY_NOTICES.md?raw";
 import type { ReportHelpTopicId } from "../lib/reportHelp";
+import type { SoftwareUpdateConsent } from "../lib/softwareUpdatePreferences";
+import type { SoftwareUpdateSummary } from "../lib/softwareUpdates";
 import type { TelemetryConsent } from "../lib/telemetry";
 import {
   DEFAULT_WORKBENCH_LAYOUT,
@@ -18,15 +20,27 @@ import { BrandStudio } from "./BrandStudio";
 import { ReportHelpGuides } from "./ReportHelpGuides";
 
 export type SettingsSectionId = "appearance" | "data" | "brand" | "help" | "about";
+export type SoftwareUpdateStatus =
+  | "idle"
+  | "checking"
+  | "current"
+  | "available"
+  | "installing"
+  | "error";
 
 interface SettingsWorkspaceProps {
   initialHelpTopic?: ReportHelpTopicId;
   initialSection?: SettingsSectionId;
   layout: WorkbenchLayoutPreferences;
+  onCheckForSoftwareUpdate?: () => Promise<void>;
   onLayoutChange: (layout: WorkbenchLayoutPreferences) => void;
+  onSoftwareUpdateConsentChange?: (enabled: boolean) => Promise<void>;
   onTelemetryPreferenceChange?: (enabled: boolean) => Promise<void>;
   projectId?: string;
   projectName?: string;
+  softwareUpdate?: SoftwareUpdateSummary | null;
+  softwareUpdateConsent?: SoftwareUpdateConsent;
+  softwareUpdateStatus?: SoftwareUpdateStatus;
   telemetryConsent?: TelemetryConsent;
 }
 
@@ -37,13 +51,20 @@ export function SettingsWorkspace({
   initialHelpTopic,
   initialSection = "appearance",
   layout,
+  onCheckForSoftwareUpdate = () => Promise.resolve(),
   onLayoutChange,
+  onSoftwareUpdateConsentChange = () => Promise.resolve(),
   onTelemetryPreferenceChange = () => Promise.resolve(),
   projectId,
   projectName,
+  softwareUpdate = null,
+  softwareUpdateConsent = "disabled",
+  softwareUpdateStatus = "idle",
   telemetryConsent = "disabled",
 }: SettingsWorkspaceProps) {
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
+  const [softwareUpdatePreferenceBusy, setSoftwareUpdatePreferenceBusy] = useState(false);
+  const [softwareUpdatePreferenceError, setSoftwareUpdatePreferenceError] = useState(false);
   const [telemetryBusy, setTelemetryBusy] = useState(false);
   const [telemetryError, setTelemetryError] = useState(false);
 
@@ -68,6 +89,18 @@ export function SettingsWorkspace({
       setTelemetryError(true);
     } finally {
       setTelemetryBusy(false);
+    }
+  };
+
+  const changeSoftwareUpdatePreference = async (enabled: boolean) => {
+    setSoftwareUpdatePreferenceBusy(true);
+    setSoftwareUpdatePreferenceError(false);
+    try {
+      await onSoftwareUpdateConsentChange(enabled);
+    } catch {
+      setSoftwareUpdatePreferenceError(true);
+    } finally {
+      setSoftwareUpdatePreferenceBusy(false);
     }
   };
 
@@ -173,7 +206,7 @@ export function SettingsWorkspace({
             />
             <InformationCard
               title="Offline by default"
-              description="There is no account or project-data network traffic. Anonymous diagnostics and usage events are sent only after explicit opt-in."
+              description="There is no account or project-data network traffic. Update checks and anonymous diagnostics happen only after you choose to enable them."
             />
             <InformationCard
               title="Recovery belongs to Community"
@@ -184,6 +217,41 @@ export function SettingsWorkspace({
               description="Visual links remain visual until an analyst explicitly validates a separate STIX relationship draft."
             />
           </div>
+          <SettingsSection title="Software updates">
+            <SettingSwitch
+              checked={softwareUpdateConsent === "enabled"}
+              label="Check for updates when Sheut starts"
+              description="Check once when the application opens. Sheut always asks before installing anything."
+              disabled={softwareUpdatePreferenceBusy}
+              onCheckedChange={(enabled) => void changeSoftwareUpdatePreference(enabled)}
+            />
+          </SettingsSection>
+          <div className="mt-3 flex items-start justify-between gap-4 rounded-sm border border-panel-border bg-panel-base p-4">
+            <div className="min-w-0">
+              <p className="m-0 text-copy-secondary text-xs">
+                {softwareUpdateStatusMessage(softwareUpdateStatus, softwareUpdate)}
+              </p>
+              <p className="mt-1 mb-0 text-copy-faint text-[11px] leading-5">
+                The check only reads public release information. This does not include anything from
+                your projects.
+              </p>
+            </div>
+            <Button
+              className="control-button shrink-0"
+              type="button"
+              disabled={
+                softwareUpdateStatus === "checking" || softwareUpdateStatus === "installing"
+              }
+              onClick={() => void onCheckForSoftwareUpdate()}
+            >
+              {softwareUpdateStatus === "checking" ? "Checking…" : "Check now"}
+            </Button>
+          </div>
+          {softwareUpdatePreferenceError ? (
+            <p className="error-message mt-3" role="alert">
+              Sheut could not save this setting. The previous choice remains active.
+            </p>
+          ) : null}
           <SettingsSection title="Telemetry controls">
             <SettingSwitch
               checked={telemetryConsent === "enabled"}
@@ -289,6 +357,20 @@ export function SettingsWorkspace({
       </div>
     </Tabs.Root>
   );
+}
+
+function softwareUpdateStatusMessage(
+  status: SoftwareUpdateStatus,
+  update: SoftwareUpdateSummary | null,
+): string {
+  if (status === "checking") return "Checking for updates…";
+  if (status === "current") return "Sheut is up to date.";
+  if (status === "available") {
+    return update ? `Version ${update.version} is available.` : "A new version is available.";
+  }
+  if (status === "installing") return "Updating Sheut…";
+  if (status === "error") return "Sheut could not check for updates. Try again when online.";
+  return "You can check at any time without turning on automatic checks.";
 }
 
 function SettingsHeading({ title, description }: { title: string; description: string }) {

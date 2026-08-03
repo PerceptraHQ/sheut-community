@@ -14,6 +14,8 @@ mod telemetry;
 pub fn run() {
     let application = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             commands::initialize(app)?;
             telemetry::initialize(app)?;
