@@ -295,26 +295,6 @@ const TYPST_TEMPLATE: &str = r##"
               cell
             }),
           )
-          #if entry.has_image {
-            v(5pt)
-            align(center)[
-              image(
-                entry.bytes,
-                width: entry.width_mm * 1mm,
-                height: entry.height_mm * 1mm,
-                fit: "contain",
-                alt: entry.title,
-              )
-              v(3pt)
-              text(
-                font: inputs.body_font,
-                size: 7.5pt,
-                style: "italic",
-                fill: rgb("#4B5563"),
-                "Evidence image — " + entry.title,
-              )
-            ]
-          }
         ]
       }
     ]
@@ -362,6 +342,26 @@ const TYPST_TEMPLATE: &str = r##"
               cell
             }),
           )
+          #if entry.has_image {
+            v(5pt)
+            align(center)[
+              image(
+                entry.bytes,
+                width: entry.width_mm * 1mm,
+                height: entry.height_mm * 1mm,
+                fit: "contain",
+                alt: entry.title,
+              )
+              v(3pt)
+              text(
+                font: inputs.body_font,
+                size: 7.5pt,
+                style: "italic",
+                fill: rgb("#4B5563"),
+                "Evidence image — " + entry.title,
+              )
+            ]
+          }
         ]
       }
     ]
