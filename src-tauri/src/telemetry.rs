@@ -20,7 +20,7 @@ use crate::commands::CommandError;
 const SETTINGS_SCHEMA_VERSION: u8 = 1;
 const EVENT_SCHEMA_VERSION: u8 = 1;
 const TELEMETRY_SETTINGS_FILE: &str = "telemetry.json";
-const TELEMETRY_ENDPOINT_HOST: &str = "telemetry.perceptrahq.com";
+const TELEMETRY_ENDPOINT_HOST: &str = "telemetry-api-production-f7f4.up.railway.app";
 const TELEMETRY_ENDPOINT_PATH: &str = "/v1/events";
 
 type SharedTelemetrySettings = Arc<Mutex<TelemetrySettings>>;
@@ -356,13 +356,25 @@ mod tests {
 
     #[test]
     fn telemetry_endpoint_must_be_the_exact_https_ingestion_path() {
-        assert!(validated_endpoint("https://telemetry.perceptrahq.com/v1/events").is_some());
-        assert!(validated_endpoint("http://telemetry.perceptrahq.com/v1/events").is_none());
-        assert!(validated_endpoint("https://telemetry.perceptrahq.com/anything").is_none());
+        assert!(
+            validated_endpoint("https://telemetry-api-production-f7f4.up.railway.app/v1/events")
+                .is_some()
+        );
+        assert!(
+            validated_endpoint("http://telemetry-api-production-f7f4.up.railway.app/v1/events")
+                .is_none()
+        );
+        assert!(validated_endpoint("https://telemetry.perceptrahq.com/v1/events").is_none());
+        assert!(
+            validated_endpoint("https://telemetry-api-production-f7f4.up.railway.app/anything")
+                .is_none()
+        );
         assert!(validated_endpoint("https://attacker.invalid/v1/events").is_none());
         assert!(
-            validated_endpoint("https://telemetry.perceptrahq.com/v1/events?project=secret")
-                .is_none()
+            validated_endpoint(
+                "https://telemetry-api-production-f7f4.up.railway.app/v1/events?project=secret"
+            )
+            .is_none()
         );
     }
 }

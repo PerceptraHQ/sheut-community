@@ -6,9 +6,10 @@ Data & security**. Declining does not create an installation identifier and
 does not send a telemetry request.
 
 The production ingestion endpoint is
-`https://telemetry.perceptrahq.com/v1/events`. The deployable gateway is kept in
-a separate private repository. This document and the client-side contract stay
-public so Community users can review exactly what Sheut can send.
+`https://telemetry-api-production-f7f4.up.railway.app/v1/events`. The deployable
+gateway is kept in a separate private repository. This document and the
+client-side contract stay public so Community users can review exactly what
+Sheut can send.
 
 ## Event contract
 
@@ -52,7 +53,7 @@ fixed and contain no message, stack trace, or runtime context.
 
 The HTTPS service necessarily receives a source IP while handling a network
 connection. The gateway may use it transiently for abuse prevention, but must
-not include it in the event sent to Sentry or write it to application logs.
+not persist it or write it to application logs.
 
 ## Consent and delivery
 
@@ -64,12 +65,12 @@ not include it in the event sent to Sentry or write it to application logs.
 Turning telemetry off deletes the local installation identifier immediately.
 There is no disk-backed telemetry queue, no delivery retry, and no telemetry
 generated before consent. Opt-out stops future reports; already delivered
-events expire under the gateway, analytics, and Sentry retention policies.
+events expire under the gateway and ClickHouse retention policies.
 
 Release builds receive the endpoint through the reviewed
 `SHEUT_TELEMETRY_ENDPOINT` build variable. Rust accepts only HTTPS, the exact
-`telemetry.perceptrahq.com` host, and the exact `/v1/events` path, with no URL
-credentials, custom port, query, fragment, or redirects.
+`telemetry-api-production-f7f4.up.railway.app` host, and the exact `/v1/events`
+path, with no URL credentials, custom port, query, fragment, or redirects.
 
 ## Gateway requirements
 
@@ -82,15 +83,13 @@ The separate gateway must:
 5. derive purpose-specific, rotating identifiers with a server-side HMAC,
    then immediately discard the raw installation identifier;
 6. disable request-body, source-IP, and header logging;
-7. send error categories only to Sentry, with PII, breadcrumbs, tracing,
-   replay, request capture, and default integrations disabled;
-8. batch usage events into ClickHouse using only the fixed event name,
-   minute-rounded time, application version, operating-system family, CPU
-   architecture, and a daily rotating pseudonym;
-9. expire event-level analytics rows after 30 days, retain only anonymous
+7. batch usage and fixed error categories into ClickHouse using only the fixed
+   event name, minute-rounded time, application version, operating-system
+   family, CPU architecture, and a daily rotating pseudonym;
+8. expire event-level analytics rows after 30 days, retain only anonymous
    daily aggregates for up to 13 months, and never persist request bodies,
    source IPs, event IDs, or raw installation identifiers; and
-10. return a generic status without echoing submitted data.
+9. return a generic status without echoing submitted data.
 
 The private gateway repository is an implementation detail, not a secrecy
 control: the endpoint is public by necessity. Abuse resistance comes from
