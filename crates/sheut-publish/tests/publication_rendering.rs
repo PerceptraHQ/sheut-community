@@ -766,7 +766,7 @@ fn guided_reports_omit_empty_optional_content_and_blank_table_rows() {
         .unwrap(),
     )
     .unwrap();
-    assert!(!html.contains("Key intelligence gaps"));
+    assert!(!html.contains("Intelligence gaps"));
     assert!(!html.contains("Data sources"));
 
     let docx = render_publication(
@@ -780,7 +780,7 @@ fn guided_reports_omit_empty_optional_content_and_blank_table_rows() {
     )
     .unwrap();
     let document_xml = docx_document_xml(&docx);
-    assert!(!document_xml.contains("KEY INTELLIGENCE GAPS"));
+    assert!(!document_xml.contains("INTELLIGENCE GAPS"));
     assert!(!document_xml.contains("DATA SOURCES"));
 
     let pdf = render_publication(

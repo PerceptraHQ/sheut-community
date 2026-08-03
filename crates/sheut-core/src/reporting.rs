@@ -1474,6 +1474,17 @@ fn illicit_ecosystem_template_v4() -> ReportTemplateDefinition {
     let id = previous.id;
     let name = previous.name;
     let mut sections = previous.sections;
+    let intelligence_gaps = sections
+        .iter_mut()
+        .find(|section| section.key == "intelligence_gaps")
+        .expect("revision three contains intelligence gaps");
+    intelligence_gaps.title = "Intelligence gaps".to_owned();
+    let intelligence_gaps_narrative = intelligence_gaps
+        .fields
+        .iter_mut()
+        .find(|field| field.key == "legacy_intelligence_gaps")
+        .expect("revision three contains the compatibility narrative");
+    intelligence_gaps_narrative.label = "Intelligence gaps narrative".to_owned();
     let administration = sections
         .iter_mut()
         .find(|section| section.key == "report_administration")
@@ -1582,7 +1593,7 @@ fn built_in_template(kind: BuiltinReportTemplate) -> ReportTemplateDefinition {
                 ),
                 section(
                     "intelligence_gaps",
-                    "Key intelligence gaps",
+                    "Intelligence gaps",
                     true,
                     vec![narrative("intelligence_gaps", "Intelligence gaps", false)],
                 ),
@@ -1694,7 +1705,7 @@ fn built_in_template(kind: BuiltinReportTemplate) -> ReportTemplateDefinition {
                 ),
                 section(
                     "intelligence_gaps",
-                    "Key intelligence gaps",
+                    "Intelligence gaps",
                     true,
                     vec![narrative("intelligence_gaps", "Intelligence gaps", false)],
                 ),
@@ -1772,7 +1783,7 @@ fn built_in_template(kind: BuiltinReportTemplate) -> ReportTemplateDefinition {
                 ),
                 section(
                     "intelligence_gaps",
-                    "Key intelligence gaps",
+                    "Intelligence gaps",
                     true,
                     vec![narrative("intelligence_gaps", "Intelligence gaps", false)],
                 ),
