@@ -101,6 +101,8 @@ const VIEW_TELEMETRY_EVENTS: Partial<Record<WorkspaceView, TelemetryEventName>> 
   settings: "settings_opened",
 };
 
+const PROJECT_STATUS_RECONCILIATION_MS = 30_000;
+
 function Workbench() {
   const notices = useVaultNotices();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -143,6 +145,7 @@ function Workbench() {
     null,
   );
   const applicationStartedReported = useRef(false);
+  const currentProjectRef = useRef<ProjectSummary | null>(null);
   const panelStateBeforeGraphFocus = useRef({ explorer: false, inspector: false });
   const explorerCollapsedRef = useRef(explorerCollapsed);
   const inspectorCollapsedRef = useRef(inspectorCollapsed);
@@ -171,6 +174,32 @@ function Workbench() {
       if (view !== "graph") setSelectedGraphItem(null);
     },
     [telemetryPreference?.consent],
+  );
+
+  const closeAutoLockedProject = useCallback(
+    (project: ProjectSummary, idleTimeoutMinutes?: number) => {
+      currentProjectRef.current = null;
+      setCurrentProject(null);
+      setLockError(null);
+      setDocumentBusy(false);
+      setWorkspaceActionRequest(null);
+      setSelectedDocument(null);
+      setExternallyRestoredDocument(null);
+      setSelectedMitreTechnique(null);
+      setSelectedGraphItem(null);
+      setGraphFocusMode(false);
+      setCommandPaletteOpen(false);
+      setActiveView("overview");
+      notices.add({
+        title: "Project locked after inactivity",
+        description:
+          idleTimeoutMinutes === undefined
+            ? `${project.name ?? "Local project"} was locked after inactivity.`
+            : `${project.name ?? "Local project"} was locked after ${idleTimeoutMinutes} minutes.`,
+        type: "info",
+      });
+    },
+    [notices],
   );
 
   const handleGraphFocusModeChange = useCallback((active: boolean) => {
@@ -289,6 +318,7 @@ function Workbench() {
       ...existing.filter((project) => project.id !== created.id),
       created,
     ]);
+    currentProjectRef.current = created;
     setCurrentProject(created);
     void recordTelemetryEvent("project_created");
     handleSelectView("overview");
@@ -304,6 +334,7 @@ function Workbench() {
     setProjects((existing) =>
       existing.map((project) => (project.id === unlocked.id ? unlocked : project)),
     );
+    currentProjectRef.current = unlocked;
     setCurrentProject(unlocked);
     void recordTelemetryEvent("project_unlocked");
     handleSelectView("overview");
@@ -319,6 +350,7 @@ function Workbench() {
     setProjects((existing) =>
       existing.map((project) => (project.id === unlocked.id ? unlocked : project)),
     );
+    currentProjectRef.current = unlocked;
     setCurrentProject(unlocked);
     void recordTelemetryEvent("project_unlocked");
     handleSelectView("overview");
@@ -340,6 +372,7 @@ function Workbench() {
           project.id === currentProject.id ? { ...project, locked: true } : project,
         ),
       );
+      currentProjectRef.current = null;
       setCurrentProject(null);
       handleSelectView("overview");
       notices.add({
@@ -497,15 +530,9 @@ function Workbench() {
               lockedProjectIds.has(project.id) ? { ...project, locked: true } : project,
             ),
           );
-          if (!currentProject || !lockedProjectIds.has(currentProject.id)) return;
-          setCurrentProject(null);
-          setLockError(null);
-          handleSelectView("overview");
-          notices.add({
-            title: "Project locked after inactivity",
-            description: `${currentProject.name ?? "Local project"} was locked after ${payload.idleTimeoutMinutes} minutes.`,
-            type: "info",
-          });
+          const openedProject = currentProjectRef.current;
+          if (!openedProject || !lockedProjectIds.has(openedProject.id)) return;
+          closeAutoLockedProject(openedProject, payload.idleTimeoutMinutes);
         }),
       )
       .then((unlisten) => {
@@ -520,7 +547,47 @@ function Workbench() {
       active = false;
       removeListener?.();
     };
-  }, [currentProject, handleSelectView, notices]);
+  }, [closeAutoLockedProject]);
+
+  useEffect(() => {
+    if (!currentProject) return;
+    let active = true;
+    let checking = false;
+
+    const reconcileProjectStatus = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const discovered = await listProjects();
+        if (!active) return;
+        setProjects(discovered);
+        const openedProject = currentProjectRef.current;
+        if (!openedProject) return;
+        const status = discovered.find((project) => project.id === openedProject.id);
+        if (!status || status.locked) closeAutoLockedProject(openedProject);
+      } catch {
+        // The event remains authoritative when a transient status refresh fails.
+      } finally {
+        checking = false;
+      }
+    };
+    const handleFocus = () => void reconcileProjectStatus();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") void reconcileProjectStatus();
+    };
+    const timer = window.setInterval(
+      () => void reconcileProjectStatus(),
+      PROJECT_STATUS_RECONCILIATION_MS,
+    );
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [closeAutoLockedProject, currentProject]);
 
   return (
     <div
@@ -820,6 +887,7 @@ function Workbench() {
             }}
             onTechniqueObservationChange={() => setMitreRefreshKey((current) => current + 1)}
             onProjectUpdated={(updated) => {
+              currentProjectRef.current = updated;
               setCurrentProject(updated);
               setProjects((existing) =>
                 existing.map((project) => (project.id === updated.id ? updated : project)),

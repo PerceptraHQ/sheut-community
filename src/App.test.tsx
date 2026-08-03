@@ -153,6 +153,60 @@ describe("App", () => {
     expect(screen.queryByText("STIX 2.1")).not.toBeInTheDocument();
   });
 
+  it("shows an explicit locked status for discovered projects", async () => {
+    vi.mocked(projectsApi.listProjects).mockResolvedValue([
+      {
+        id: PROJECT_ID,
+        name: "Idle project",
+        locked: true,
+        unlockMethod: "device",
+        defaultTlpMarking: "amber",
+      },
+    ]);
+
+    render(<App />);
+
+    expect(await screen.findByText("Idle project")).toBeVisible();
+    expect(screen.getByText("Locked")).toBeVisible();
+  });
+
+  it("closes an open workspace when project reconciliation finds it locked", async () => {
+    const user = userEvent.setup();
+    vi.mocked(projectsApi.createProject).mockResolvedValue({
+      id: PROJECT_ID,
+      name: "Idle project",
+      locked: false,
+      unlockMethod: "device",
+      defaultTlpMarking: "amber",
+    });
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Create project" }));
+    const dialog = screen.getByRole("dialog", { name: "Create project" });
+    await user.type(within(dialog).getByLabelText("Project name"), "Idle project");
+    await user.click(within(dialog).getByRole("button", { name: "Create project" }));
+    await user.click(await screen.findByRole("button", { name: "Documents" }));
+    expect(await screen.findByRole("heading", { name: "Documents" })).toBeVisible();
+
+    vi.mocked(projectsApi.listProjects).mockResolvedValue([
+      {
+        id: PROJECT_ID,
+        name: "Idle project",
+        locked: true,
+        unlockMethod: "device",
+        defaultTlpMarking: "amber",
+      },
+    ]);
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Open project" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Documents" })).not.toBeInTheDocument();
+    expect(screen.getByText("Locked")).toBeVisible();
+    expect(
+      await screen.findByRole("dialog", { name: "Project locked after inactivity" }),
+    ).toBeVisible();
+  });
+
   it("keeps app-level navigation separate from project content", async () => {
     render(<App />);
     const navigation = await screen.findByRole("navigation", { name: "Activity rail" });

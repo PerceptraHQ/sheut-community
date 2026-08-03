@@ -121,6 +121,9 @@ export function ProjectLauncher({
                   <span className="block truncate text-copy-secondary text-xs">
                     {project.name ?? "Unnamed local project"}
                   </span>
+                  <span className="mt-0.5 block text-[11px] text-copy-faint">
+                    {project.locked ? "Locked" : "Unlocked"}
+                  </span>
                 </span>
                 <Button
                   className="control-button"
