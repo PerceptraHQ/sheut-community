@@ -27,10 +27,10 @@ use sheut_core::{
     DomainErrorCode, EvidenceFileMetadata, EvidenceMetadataInput, GraphViewport, GraphWorkspace,
     GraphWorkspaceSnapshot, GuidedReport, GuidedReportFieldValue, ImageAttachmentMetadata,
     ImageMediaType, LocalId, MAX_GRAPH_WORKSPACE_ITEMS, MitreTechniqueReference, Position,
-    ProjectMetadata, PublicationRecord, ReportSectionDisposition, ReportTemplateDefinition,
-    ReportTemplateSection, Revision, SemanticRelationshipDraft, TechniqueAssessment,
-    TechniqueObservation, TechniqueOutcome, TlpMarking, VisualLink, WorkspaceItem,
-    WorkspaceItemKind, WorkspaceMode, detect_evidence_media_type, render_document,
+    ProjectMetadata, PublicationRecord, ReportReadinessWarning, ReportSectionDisposition,
+    ReportTemplateDefinition, ReportTemplateSection, Revision, SemanticRelationshipDraft,
+    TechniqueAssessment, TechniqueObservation, TechniqueOutcome, TlpMarking, VisualLink,
+    WorkspaceItem, WorkspaceItemKind, WorkspaceMode, detect_evidence_media_type, render_document,
     report_template_catalog, report_template_revision,
 };
 use sheut_mitre::{
@@ -1017,6 +1017,36 @@ impl<K: ProjectKeyStore> ProjectManager<K> {
             .map_err(map_store_error)?;
         session.last_active_unix_ms = now_unix_ms;
         Ok(revised)
+    }
+
+    pub fn guided_report_readiness(
+        &mut self,
+        project_id: LocalId,
+        report_id: LocalId,
+        now_unix_ms: i64,
+    ) -> Result<Vec<ReportReadinessWarning>, LifecycleError> {
+        let session = self
+            .sessions
+            .get_mut(&project_id)
+            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
+        let report = session
+            .store
+            .load_guided_report(report_id)
+            .map_err(map_store_error)?
+            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?;
+        let template = if let Some(template) =
+            report_template_revision(report.template_id(), report.template_revision())
+        {
+            template
+        } else {
+            session
+                .store
+                .load_report_template_revision(report.template_id(), report.template_revision())
+                .map_err(map_store_error)?
+                .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?
+        };
+        session.last_active_unix_ms = now_unix_ms;
+        Ok(report.readiness_warnings(&template))
     }
 
     pub fn update_guided_report_section_disposition(

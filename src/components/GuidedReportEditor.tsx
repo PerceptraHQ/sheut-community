@@ -1,42 +1,32 @@
+import { AlertDialog } from "@base-ui/react/alert-dialog";
 import { Button } from "@base-ui/react/button";
-import { Collapsible } from "@base-ui/react/collapsible";
 import { Dialog } from "@base-ui/react/dialog";
 import { Field } from "@base-ui/react/field";
+import { Menu } from "@base-ui/react/menu";
+import { Popover } from "@base-ui/react/popover";
 import {
-  IconBold,
-  IconChevronDown,
   IconDeviceFloppy,
   IconFileExport,
-  IconItalic,
-  IconLink,
-  IconLinkOff,
-  IconList,
-  IconListNumbers,
-  IconPhotoPlus,
+  IconHelp,
   IconPlus,
-  IconQuote,
   IconTrash,
   IconX,
 } from "@tabler/icons-react";
-import { type Editor, EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import { type SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { defangUrls } from "../lib/defang";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isWorkspaceActionEvent, WORKSPACE_ACTION_EVENT } from "../lib/desktopActions";
 import {
   type DocumentPublicationOptions,
   type DocumentRoot,
   publicationSelectionsFromRoots,
 } from "../lib/documents";
-import { normalizeEditorLink } from "../lib/editor-content";
 import {
-  type EvidenceFileMetadata,
   type GuidedReport,
   type GuidedReportFieldValue,
+  type GuidedReportRowReference,
+  getGuidedReportReadiness,
   guidedReportErrorMessage,
-  importEvidenceImage,
-  listEvidenceFiles,
   type ProjectDataSelection,
+  type ReportReadinessWarning,
   type ReportSectionDisposition,
   type ReportTemplateDefinition,
   type ReportTemplateField,
@@ -44,11 +34,12 @@ import {
   saveGuidedReport,
   updateGuidedReportSectionDisposition,
 } from "../lib/guided-reports";
-import { createEvidenceImageExtension } from "../lib/image-attachment-extension";
 import type { TlpMarking } from "../lib/projects";
 import { reportFieldProjectSource } from "../lib/reportHelp";
+import { AlertDialogFrame } from "./AlertDialogFrame";
 import { AutocompleteField } from "./AutocompleteField";
 import { DialogFrame } from "./DialogFrame";
+import { GuidedReportNarrativeInput } from "./GuidedReportNarrativeInput";
 import { ProjectDataPicker } from "./ProjectDataPicker";
 import { PublicationDialog } from "./PublicationDialog";
 import { SelectField, type SelectFieldOption } from "./SelectField";
@@ -88,28 +79,7 @@ const sourceTypeOptions = [
   "Vendor reporting",
 ].map((value) => ({ value, label: value }));
 
-type EvidenceImageDestination =
-  | "inline"
-  | "evidence_images"
-  | "indicators_observables"
-  | "sources_methodology"
-  | "custom";
-
-const evidencePlacementOptions: readonly SelectFieldOption[] = [
-  { value: "inline", label: "Inline in this section" },
-  { value: "evidence_images", label: "Appendix — Evidence images" },
-  { value: "indicators_observables", label: "Appendix — Indicators and observables" },
-  { value: "sources_methodology", label: "Appendix — Sources and methodology" },
-  { value: "custom", label: "Custom appendix" },
-];
-
 const AUTOSAVE_DELAY_MS = 2_500;
-let tableRowSequence = 0;
-
-function nextTableRowKey(fieldKey: string): string {
-  tableRowSequence += 1;
-  return `${fieldKey}-row-${tableRowSequence}`;
-}
 
 export function GuidedReportEditor({
   onBusyChange,
@@ -128,6 +98,9 @@ export function GuidedReportEditor({
   const [revision, setRevision] = useState(report.revision);
   const [saveState, setSaveState] = useState<"saved" | "pending" | "saving" | "error">("saved");
   const [publicationOpen, setPublicationOpen] = useState(false);
+  const [readinessOpen, setReadinessOpen] = useState(false);
+  const [readinessWarnings, setReadinessWarnings] = useState<ReportReadinessWarning[]>([]);
+  const [checkingReadiness, setCheckingReadiness] = useState(false);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [sectionDispositions, setSectionDispositions] = useState<
@@ -140,13 +113,18 @@ export function GuidedReportEditor({
   const titleRef = useRef(title);
   const revisionRef = useRef(report.revision);
   const savingRef = useRef(false);
-  const editorRootRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<number | null>(null);
   const saveRef = useRef<() => Promise<void>>(async () => {});
   const includedTemplateSections = useMemo(
     () => template.sections.filter((section) => report.included_sections.includes(section.key)),
     [report.included_sections, template.sections],
   );
+  const [activeSectionKey, setActiveSectionKey] = useState(
+    report.included_sections[0] ?? template.sections[0]?.key ?? "",
+  );
+  const activeSection =
+    includedTemplateSections.find((section) => section.key === activeSectionKey) ??
+    includedTemplateSections[0];
   const publicationSections = useMemo(
     () =>
       includedTemplateSections
@@ -244,9 +222,9 @@ export function GuidedReportEditor({
     timerRef.current = window.setTimeout(() => void saveRef.current(), AUTOSAVE_DELAY_MS);
   };
 
-  const openPublication = useCallback(() => {
+  const openPublication = useCallback(async () => {
     setValidationAttempted(true);
-    const issues = publicationValidationMessages(
+    const issues = publicationHardValidationIssues(
       titleRef.current,
       template,
       report.included_sections,
@@ -254,15 +232,51 @@ export function GuidedReportEditor({
       fieldsRef.current,
     );
     if (issues.length > 0) {
-      const description =
-        issues.length === 1
-          ? issues[0]
-          : `${issues[0]} Fix ${issues.length - 1} more highlighted ${issues.length === 2 ? "field" : "fields"}.`;
-      notices.add({ title: "Report not ready to publish", description, type: "info" });
+      const firstInvalidSection = includedTemplateSections.find(
+        (section) =>
+          (sectionDispositions[section.key] ?? "active") === "active" &&
+          section.fields.some((field) =>
+            guidedFieldHardValidationMessage(field, fieldsRef.current[field.key]),
+          ),
+      );
+      if (firstInvalidSection) setActiveSectionKey(firstInvalidSection.key);
+      notices.add({ title: "Report not published", description: issues[0].message, type: "info" });
+      window.setTimeout(() => focusReportField(issues[0].fieldKey), 0);
       return;
     }
-    setPublicationOpen(true);
-  }, [notices, report.included_sections, sectionDispositions, template]);
+    if (saveState !== "saved") {
+      notices.add({
+        title: "Save before publishing",
+        description: "Save the current report revision before checking readiness.",
+        type: "info",
+      });
+      return;
+    }
+    setCheckingReadiness(true);
+    try {
+      const warnings = await getGuidedReportReadiness(projectId, report.id);
+      setReadinessWarnings(warnings);
+      if (warnings.length > 0) setReadinessOpen(true);
+      else setPublicationOpen(true);
+    } catch (cause) {
+      notices.add({
+        title: "Readiness could not be checked",
+        description: guidedReportErrorMessage(cause),
+        type: "info",
+      });
+    } finally {
+      setCheckingReadiness(false);
+    }
+  }, [
+    includedTemplateSections,
+    notices,
+    projectId,
+    report.id,
+    report.included_sections,
+    saveState,
+    sectionDispositions,
+    template,
+  ]);
 
   const updateSectionDisposition = async (
     sectionKey: string,
@@ -330,7 +344,7 @@ export function GuidedReportEditor({
           });
           return;
         }
-        openPublication();
+        void openPublication();
       }
     };
     window.addEventListener(WORKSPACE_ACTION_EVENT, handleWorkspaceAction);
@@ -349,10 +363,7 @@ export function GuidedReportEditor({
   const titleValidation = reportTitleValidationMessage(title);
 
   return (
-    <div
-      className="mx-auto grid w-full max-w-7xl gap-4 px-5 py-5 lg:grid-cols-[14rem_minmax(0,1fr)]"
-      ref={editorRootRef}
-    >
+    <div className="mx-auto grid w-full max-w-7xl gap-4 px-5 py-5 lg:grid-cols-[14rem_minmax(0,1fr)]">
       <nav
         aria-label="Report sections"
         className="sticky top-0 z-20 -mx-1 flex gap-1 overflow-x-auto rounded-sm border border-panel-border bg-panel-raised p-2 lg:top-5 lg:mx-0 lg:grid lg:self-start lg:overflow-visible"
@@ -367,40 +378,28 @@ export function GuidedReportEditor({
             sectionDispositions[section.key] ?? "active",
           );
           return (
-            <a
-              className="flex min-w-max items-center justify-between gap-3 rounded-sm px-2 py-1.5 text-copy-secondary text-xs no-underline hover:bg-panel-hover hover:text-copy-primary focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent lg:min-w-0"
-              href={`#report-section-${section.key}`}
+            <button
+              aria-current={activeSection?.key === section.key ? "page" : undefined}
+              className={`flex min-w-max items-center justify-between gap-3 rounded-sm border-0 px-2 py-1.5 text-left text-copy-secondary text-xs hover:bg-panel-hover hover:text-copy-primary focus-visible:outline focus-visible:outline-1 focus-visible:outline-accent lg:min-w-0 ${
+                activeSection?.key === section.key
+                  ? "bg-panel-hover text-copy-primary"
+                  : "bg-transparent"
+              }`}
               key={section.key}
-              onClick={(event) => {
-                event.preventDefault();
-                const canvas = editorRootRef.current?.closest<HTMLElement>(".canvas");
-                const target = document
-                  .getElementById(`report-section-${section.key}`)
-                  ?.closest<HTMLElement>("section");
-                if (!canvas || !target) return;
-                const behavior = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
-                  ? "auto"
-                  : "smooth";
-                canvas.scrollTo({
-                  behavior,
-                  top:
-                    canvas.scrollTop +
-                    target.getBoundingClientRect().top -
-                    canvas.getBoundingClientRect().top,
-                });
-              }}
+              onClick={() => setActiveSectionKey(section.key)}
+              type="button"
             >
               <span className="truncate">{section.title}</span>
               <span
                 className={
-                  status.kind === "needs-input"
+                  status.kind === "in-progress"
                     ? "shrink-0 text-[10px] text-accent-hover"
                     : "shrink-0 text-[10px] text-copy-faint"
                 }
               >
                 {status.label}
               </span>
-            </a>
+            </button>
           );
         })}
       </nav>
@@ -509,8 +508,8 @@ export function GuidedReportEditor({
             <Button
               className="control-button"
               type="button"
-              disabled={!onPublish || saveState !== "saved" || publishing}
-              onClick={openPublication}
+              disabled={!onPublish || saveState === "saving" || publishing || checkingReadiness}
+              onClick={() => void openPublication()}
               aria-label="Publish report"
             >
               <IconFileExport size={15} stroke={1.7} aria-hidden="true" />
@@ -541,77 +540,122 @@ export function GuidedReportEditor({
           />
         ) : null}
 
-        {includedTemplateSections.map((section) => {
-          const disposition = sectionDispositions[section.key] ?? "active";
-          const status = guidedSectionStatus(section, fields, disposition);
-          return (
-            <section
-              className="grid scroll-mt-20 gap-4 rounded-sm border border-panel-border bg-panel-base p-4"
-              key={section.key}
-              aria-labelledby={`report-section-${section.key}`}
-            >
-              <header className="flex items-center gap-2 border-panel-border border-b pb-3">
-                <h2 className="m-0 text-sm font-semibold" id={`report-section-${section.key}`}>
-                  {section.title}
-                </h2>
-                {section.optional ? (
-                  <span className="rounded-sm bg-panel-deep px-1.5 py-0.5 text-[10px] text-copy-faint uppercase tracking-wide">
-                    Optional
-                  </span>
-                ) : null}
-                {section.optional ? (
-                  <Button
-                    className="control-button ml-auto px-2 py-1 text-[10px]"
-                    type="button"
-                    disabled={saveState !== "saved"}
-                    onClick={() =>
-                      void updateSectionDisposition(
-                        section.key,
-                        disposition === "not_applicable" ? "active" : "not_applicable",
-                      )
+        <Dialog.Root open={readinessOpen} onOpenChange={setReadinessOpen}>
+          <DialogFrame width="standard">
+            <header className="flex h-11 items-center justify-between border-panel-border border-b px-4">
+              <Dialog.Title className="m-0 text-sm font-semibold">
+                Recommended content is missing
+              </Dialog.Title>
+              <Dialog.Close render={<Button className="icon-control" />} aria-label="Close">
+                <IconX size={16} stroke={1.7} aria-hidden="true" />
+              </Dialog.Close>
+            </header>
+            <div className="grid gap-4 p-4">
+              <Dialog.Description className="m-0 text-copy-muted text-xs leading-5">
+                You can publish now. Review these recommendations or return to the report.
+              </Dialog.Description>
+              <ul className="m-0 grid max-h-64 gap-2 overflow-y-auto pl-5 text-copy-secondary text-xs leading-5">
+                {readinessWarnings.map((warning) => (
+                  <li key={`${warning.section_key}:${warning.field_key}`}>
+                    <span className="font-medium">
+                      {template.sections.find((section) => section.key === warning.section_key)
+                        ?.title ?? warning.section_key}
+                      :
+                    </span>{" "}
+                    {warning.message}
+                  </li>
+                ))}
+              </ul>
+              <div className="flex justify-end gap-2">
+                <Dialog.Close render={<Button className="control-button" />} type="button">
+                  Return to report
+                </Dialog.Close>
+                <Button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => {
+                    setReadinessOpen(false);
+                    setPublicationOpen(true);
+                  }}
+                >
+                  Continue to Publish
+                </Button>
+              </div>
+            </div>
+          </DialogFrame>
+        </Dialog.Root>
+
+        {includedTemplateSections
+          .filter((section) => section.key === activeSection?.key)
+          .map((section) => {
+            const disposition = sectionDispositions[section.key] ?? "active";
+            const status = guidedSectionStatus(section, fields, disposition);
+            return (
+              <section
+                className="grid scroll-mt-20 gap-4 rounded-sm border border-panel-border bg-panel-base p-4"
+                key={section.key}
+                aria-labelledby={`report-section-${section.key}`}
+              >
+                <header className="flex items-center gap-2 border-panel-border border-b pb-3">
+                  <h2 className="m-0 text-sm font-semibold" id={`report-section-${section.key}`}>
+                    {section.title}
+                  </h2>
+                  {section.optional ? (
+                    <span className="rounded-sm bg-panel-deep px-1.5 py-0.5 text-[10px] text-copy-faint uppercase tracking-wide">
+                      Optional
+                    </span>
+                  ) : null}
+                  {section.guidance ? (
+                    <SectionHelp title={section.title} guidance={section.guidance} />
+                  ) : null}
+                  {section.optional ? (
+                    <Button
+                      className="control-button ml-auto px-2 py-1 text-[10px]"
+                      type="button"
+                      disabled={saveState !== "saved"}
+                      onClick={() =>
+                        void updateSectionDisposition(
+                          section.key,
+                          disposition === "not_applicable" ? "active" : "not_applicable",
+                        )
+                      }
+                    >
+                      {disposition === "not_applicable" ? "Use section" : "Not applicable"}
+                    </Button>
+                  ) : null}
+                  <span
+                    className={
+                      status.kind === "in-progress"
+                        ? `${section.optional ? "" : "ml-auto"} text-[11px] text-accent-hover`
+                        : `${section.optional ? "" : "ml-auto"} text-[11px] text-copy-faint`
                     }
                   >
-                    {disposition === "not_applicable" ? "Use section" : "Not applicable"}
-                  </Button>
+                    {status.label}
+                  </span>
+                </header>
+                {section.key === "report_administration" ? (
+                  <p className="m-0 rounded-sm border border-panel-border bg-panel-deep px-3 py-2 text-copy-muted text-xs leading-5">
+                    The report title is set above. Choose the release version and handling marking
+                    in Publish; both are stored in the publication snapshot and reproduced in HTML,
+                    DOCX, and PDF.
+                  </p>
                 ) : null}
-                <span
-                  className={
-                    status.kind === "needs-input"
-                      ? `${section.optional ? "" : "ml-auto"} text-[11px] text-accent-hover`
-                      : `${section.optional ? "" : "ml-auto"} text-[11px] text-copy-faint`
-                  }
-                >
-                  {status.label}
-                </span>
-              </header>
-              {section.guidance ? (
-                <p className="m-0 rounded-sm border border-panel-border bg-panel-deep px-3 py-2 text-copy-muted text-xs leading-5">
-                  {section.guidance}
-                </p>
-              ) : null}
-              {section.key === "report_administration" ? (
-                <p className="m-0 rounded-sm border border-panel-border bg-panel-deep px-3 py-2 text-copy-muted text-xs leading-5">
-                  The report title is set above. Choose the release version and handling marking in
-                  Publish; both are stored in the publication snapshot and reproduced in HTML, DOCX,
-                  and PDF.
-                </p>
-              ) : null}
-              {disposition === "not_applicable" ? (
-                <p className="m-0 text-copy-muted text-sm">
-                  This optional section is recorded as not applicable and will not be published.
-                </p>
-              ) : (
-                <GuidedSectionFields
-                  fields={fields}
-                  projectId={projectId}
-                  section={section}
-                  validationAttempted={validationAttempted}
-                  onChange={updateField}
-                />
-              )}
-            </section>
-          );
-        })}
+                {disposition === "not_applicable" ? (
+                  <p className="m-0 text-copy-muted text-sm">
+                    This optional section is recorded as not applicable and will not be published.
+                  </p>
+                ) : (
+                  <GuidedSectionFields
+                    fields={fields}
+                    projectId={projectId}
+                    section={section}
+                    validationAttempted={validationAttempted}
+                    onChange={updateField}
+                  />
+                )}
+              </section>
+            );
+          })}
       </article>
     </div>
   );
@@ -630,43 +674,315 @@ function GuidedSectionFields({
   section: ReportTemplateSection;
   validationAttempted: boolean;
 }) {
-  const required = section.fields.filter((field) => field.required);
-  const optional = section.fields.filter((field) => !field.required);
-  const renderField = (field: ReportTemplateField) => (
-    <GuidedField
-      field={field}
-      key={field.key}
-      projectId={projectId}
-      value={fields[field.key]}
-      validationAttempted={validationAttempted}
-      onChange={(value) => onChange(field.key, value)}
-    />
+  const [revealedFieldKeys, setRevealedFieldKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const primaryNarrative = section.fields.find((field) => field.kind === "narrative");
+  const scalarFields = section.fields.filter((field) => isScalarField(field));
+  const secondaryFields = section.fields.filter(
+    (field) => field.key !== primaryNarrative?.key && !isScalarField(field),
   );
-  if (optional.length <= 3) return <>{section.fields.map(renderField)}</>;
-  const hasOptionalContent = optional.some((field) =>
-    guidedFieldHasPublicationContent(fields[field.key]),
+  const detailsVisible = scalarFields.some(
+    (field) =>
+      field.required ||
+      revealedFieldKeys.has(field.key) ||
+      guidedFieldHasPublicationContent(fields[field.key]),
+  );
+  const visibleSecondaryFields = secondaryFields.filter(
+    (field) =>
+      field.required ||
+      revealedFieldKeys.has(field.key) ||
+      guidedFieldHasPublicationContent(fields[field.key]),
+  );
+  const hiddenFields = secondaryFields.filter(
+    (field) => !visibleSecondaryFields.some((visibleField) => visibleField.key === field.key),
+  );
+  const canAddDetails = scalarFields.length > 0 && !detailsVisible;
+  const renderField = (field: ReportTemplateField) => (
+    <div className="grid gap-2" key={field.key}>
+      <GuidedField
+        field={field}
+        projectId={projectId}
+        value={fields[field.key]}
+        validationAttempted={validationAttempted}
+        onChange={(value) => onChange(field.key, value)}
+      />
+      {!field.required &&
+      revealedFieldKeys.has(field.key) &&
+      !guidedFieldHasPublicationContent(fields[field.key]) ? (
+        <Button
+          className="control-button justify-self-start"
+          type="button"
+          onClick={() =>
+            setRevealedFieldKeys((current) => {
+              const next = new Set(current);
+              next.delete(field.key);
+              return next;
+            })
+          }
+        >
+          Dismiss {field.label}
+        </Button>
+      ) : null}
+    </div>
   );
   return (
-    <>
-      {required.map(renderField)}
-      <Collapsible.Root
-        className="rounded-sm border border-panel-border bg-panel-deep"
-        defaultOpen={hasOptionalContent}
-      >
-        <Collapsible.Trigger className="group flex w-full items-center justify-between gap-3 border-0 bg-transparent px-3 py-2 text-left font-medium text-copy-secondary text-xs hover:bg-panel-hover">
-          Additional structured details
-          <IconChevronDown
-            aria-hidden="true"
-            className="transition-transform group-data-panel-open:rotate-180"
-            size={14}
-            stroke={1.7}
-          />
-        </Collapsible.Trigger>
-        <Collapsible.Panel className="grid h-[var(--collapsible-panel-height)] gap-4 overflow-hidden border-panel-border border-t px-3 py-3 transition-[height] duration-150 data-ending-style:h-0 data-starting-style:h-0">
-          {optional.map(renderField)}
-        </Collapsible.Panel>
-      </Collapsible.Root>
-    </>
+    <div className="grid gap-4">
+      {primaryNarrative ? renderField(primaryNarrative) : null}
+      {detailsVisible ? (
+        <GuidedDetails
+          fields={scalarFields}
+          values={fields}
+          validationAttempted={validationAttempted}
+          onChange={onChange}
+        />
+      ) : null}
+      {visibleSecondaryFields.map(renderField)}
+      {hiddenFields.length > 0 || canAddDetails ? (
+        <div className="flex items-center justify-between gap-3 border-panel-border border-t pt-3">
+          <p className="m-0 text-copy-faint text-[11px] leading-4">
+            Add only the structured content this section needs.
+          </p>
+          <Menu.Root>
+            <Menu.Trigger
+              aria-label={`Add content to ${section.title}`}
+              className="control-button shrink-0"
+            >
+              <IconPlus size={14} stroke={1.7} aria-hidden="true" />
+              Add to section
+            </Menu.Trigger>
+            <Menu.Portal>
+              <Menu.Positioner align="end" className="z-50 outline-none" sideOffset={5}>
+                <Menu.Popup className="min-w-64 origin-[var(--transform-origin)] rounded-sm border border-panel-border bg-panel-raised p-1 shadow-xl ring-1 ring-white/5 outline-none transition-[scale,opacity] duration-100 data-ending-style:scale-95 data-ending-style:opacity-0 data-starting-style:scale-95 data-starting-style:opacity-0">
+                  <Menu.Group>
+                    <Menu.GroupLabel className="px-2 py-1 text-[11px] text-copy-faint uppercase tracking-wider">
+                      Available content
+                    </Menu.GroupLabel>
+                    {canAddDetails ? (
+                      <Menu.Item
+                        className="grid cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-sm px-2 py-1.5 text-copy-secondary text-xs outline-none data-highlighted:bg-panel-hover data-highlighted:text-copy-primary"
+                        onClick={() =>
+                          setRevealedFieldKeys(
+                            (current) =>
+                              new Set([...current, ...scalarFields.map((field) => field.key)]),
+                          )
+                        }
+                      >
+                        <IconPlus size={13} stroke={1.7} aria-hidden="true" />
+                        <span>Details</span>
+                      </Menu.Item>
+                    ) : null}
+                    {hiddenFields.map((field) => (
+                      <Menu.Item
+                        className="grid cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-sm px-2 py-1.5 text-copy-secondary text-xs outline-none data-highlighted:bg-panel-hover data-highlighted:text-copy-primary"
+                        key={field.key}
+                        onClick={() =>
+                          setRevealedFieldKeys((current) => new Set(current).add(field.key))
+                        }
+                      >
+                        <IconPlus size={13} stroke={1.7} aria-hidden="true" />
+                        <span>{sectionFieldMenuLabel(field)}</span>
+                      </Menu.Item>
+                    ))}
+                  </Menu.Group>
+                </Menu.Popup>
+              </Menu.Positioner>
+            </Menu.Portal>
+          </Menu.Root>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function isScalarField(field: ReportTemplateField): boolean {
+  return ["short_text", "long_text", "date", "confidence", "choice"].includes(field.kind);
+}
+
+function sectionFieldMenuLabel(field: ReportTemplateField): string {
+  if (field.kind === "repeatable_rows") return `${field.label} table`;
+  if (field.kind === "project_references") return `${field.label} references`;
+  return field.label;
+}
+
+function GuidedDetails({
+  fields,
+  onChange,
+  validationAttempted,
+  values,
+}: {
+  fields: ReportTemplateField[];
+  onChange: (key: string, value: GuidedReportFieldValue) => void;
+  validationAttempted: boolean;
+  values: Record<string, GuidedReportFieldValue>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const populated = fields.filter((field) => {
+    const value = values[field.key];
+    return value?.type === "text" && Boolean(value.value.trim());
+  });
+  const resetDraft = () =>
+    setDraft(
+      Object.fromEntries(
+        fields.map((field) => {
+          const value = values[field.key];
+          return [field.key, value?.type === "text" ? value.value : ""];
+        }),
+      ),
+    );
+  return (
+    <Dialog.Root
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen) resetDraft();
+        setOpen(nextOpen);
+      }}
+    >
+      <section className="grid gap-2 rounded-sm border border-panel-border bg-panel-deep p-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="m-0 font-medium text-copy-secondary text-xs">Details</h3>
+          <Dialog.Trigger
+            render={<Button className="control-button" />}
+            type="button"
+            data-details-fields={fields.map((field) => field.key).join(" ")}
+          >
+            Edit details
+          </Dialog.Trigger>
+        </div>
+        {populated.length > 0 ? (
+          <dl className="m-0 grid gap-2 sm:grid-cols-2">
+            {populated.map((field) => {
+              const value = values[field.key];
+              return (
+                <div className="min-w-0" key={field.key}>
+                  <dt className="text-[10px] text-copy-faint uppercase tracking-wide">
+                    {field.label}
+                  </dt>
+                  <dd className="m-0 truncate text-copy-primary text-xs">
+                    {value?.type === "text" ? value.value : ""}
+                  </dd>
+                </div>
+              );
+            })}
+          </dl>
+        ) : (
+          <p className="m-0 text-copy-faint text-xs">No details added.</p>
+        )}
+      </section>
+      <DialogFrame width="wide">
+        <header className="flex h-11 items-center justify-between border-panel-border border-b px-4">
+          <Dialog.Title className="m-0 text-sm font-semibold">Edit details</Dialog.Title>
+          <Dialog.Close render={<Button className="icon-control" />} aria-label="Close">
+            <IconX size={16} stroke={1.7} aria-hidden="true" />
+          </Dialog.Close>
+        </header>
+        <Dialog.Description className="sr-only">
+          Edit the compact structured details for this report section.
+        </Dialog.Description>
+        <div className="grid max-h-[70vh] gap-4 overflow-y-auto p-4 sm:grid-cols-2">
+          {fields.map((field) => {
+            const issue = guidedFieldHardValidationMessage(field, {
+              type: "text",
+              value: draft[field.key] ?? "",
+            });
+            return (
+              <div className="grid content-start gap-1.5" key={field.key}>
+                <ScalarFieldControl
+                  field={field}
+                  value={draft[field.key] ?? ""}
+                  onChange={(value) => setDraft((current) => ({ ...current, [field.key]: value }))}
+                />
+                <p className="m-0 text-copy-faint text-[11px] leading-4">
+                  {field.help_text ?? reportFieldProjectSource(field.label)}
+                </p>
+                {validationAttempted && issue ? (
+                  <p className="m-0 text-danger text-xs" role="alert">
+                    {issue}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex justify-end gap-2 border-panel-border border-t p-4">
+          <Dialog.Close render={<Button className="control-button" />} type="button">
+            Cancel
+          </Dialog.Close>
+          <Button
+            className="primary-button"
+            type="button"
+            onClick={() => {
+              for (const field of fields) {
+                onChange(field.key, { type: "text", value: draft[field.key] ?? "" });
+              }
+              setOpen(false);
+            }}
+          >
+            Save details
+          </Button>
+        </div>
+      </DialogFrame>
+    </Dialog.Root>
+  );
+}
+
+function ScalarFieldControl({
+  field,
+  onChange,
+  value,
+}: {
+  field: ReportTemplateField;
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  const labelClassName = "grid gap-1.5 font-medium text-copy-secondary text-xs";
+  if (field.kind === "confidence" || field.kind === "choice") {
+    const options =
+      field.kind === "confidence"
+        ? confidenceOptions
+        : (field.options ?? []).map((option) => ({ value: option, label: option }));
+    return (
+      <div className={labelClassName} data-report-field-key={field.key}>
+        <span>{field.label}</span>
+        <SelectField
+          ariaLabel={field.label}
+          onChange={onChange}
+          options={options}
+          placeholder={`Choose ${field.label.toLowerCase()}`}
+          value={value || null}
+        />
+      </div>
+    );
+  }
+  if (field.kind === "long_text") {
+    return (
+      <label className={`${labelClassName} sm:col-span-2`}>
+        {field.label}
+        <textarea
+          aria-label={field.label}
+          autoComplete="off"
+          className="min-h-28 resize-y rounded-sm border border-panel-border bg-panel-deep px-2.5 py-2 font-normal text-copy-primary text-sm leading-6 outline-none focus:border-accent"
+          data-report-field-key={field.key}
+          maxLength={100_000}
+          value={value}
+          onChange={(event) => onChange(event.currentTarget.value)}
+        />
+      </label>
+    );
+  }
+  return (
+    <label className={labelClassName}>
+      {field.label}
+      <input
+        aria-label={field.label}
+        autoComplete="off"
+        className="control-input"
+        data-report-field-key={field.key}
+        maxLength={field.kind === "short_text" ? 500 : undefined}
+        type={field.kind === "date" ? "date" : "text"}
+        value={value}
+        onChange={(event) => onChange(event.currentTarget.value)}
+      />
+    </label>
   );
 }
 
@@ -684,8 +1000,8 @@ function GuidedField({
   value: GuidedReportFieldValue | undefined;
 }) {
   const [touched, setTouched] = useState(false);
-  const label = field.required ? `${field.label} (required)` : field.label;
-  const validationMessage = guidedFieldValidationMessage(field, value);
+  const label = field.label;
+  const validationMessage = guidedFieldHardValidationMessage(field, value);
   const showValidation = (touched || validationAttempted) && Boolean(validationMessage);
   const commonRootProps = {
     invalid: showValidation,
@@ -702,40 +1018,42 @@ function GuidedField({
         >
           {label}
         </Field.Label>
-        <GuidedNarrativeInput
+        <GuidedReportNarrativeInput
           ariaLabel={label}
           projectId={projectId}
           value={root}
           onChange={(next) => onChange({ type: "narrative", value: next })}
         />
         <GuidedFieldDescription field={field} />
-        <GuidedFieldReadiness
-          field={field}
-          validationMessage={validationMessage}
-          validationVisible={showValidation}
-        />
         <GuidedFieldError message={validationMessage} visible={showValidation} />
       </Field.Root>
     );
   }
   if (field.kind === "repeatable_rows") {
-    const rows = value?.type === "rows" ? value.value : [];
+    const rows =
+      value?.type === "rows" ? value.value : value?.type === "linked_rows" ? value.value.rows : [];
+    const references = value?.type === "linked_rows" ? value.value.references : [];
     return (
       <div className="grid gap-1.5" onBlurCapture={() => setTouched(true)}>
         <GuidedRows
           field={field}
           projectId={projectId}
           rows={rows}
-          onChange={(next) => onChange({ type: "rows", value: next })}
+          references={references}
+          onChange={(nextRows, nextReferences) =>
+            onChange(
+              nextReferences.length > 0
+                ? {
+                    type: "linked_rows",
+                    value: { rows: nextRows, references: nextReferences },
+                  }
+                : { type: "rows", value: nextRows },
+            )
+          }
         />
         <p className="m-0 text-copy-faint text-[11px] leading-4">
           {field.help_text ?? reportFieldProjectSource(field.label)}
         </p>
-        <GuidedFieldReadiness
-          field={field}
-          validationMessage={validationMessage}
-          validationVisible={showValidation}
-        />
         {showValidation ? (
           <p className="m-0 text-danger text-xs" role="alert">
             {validationMessage}
@@ -774,122 +1092,39 @@ function GuidedField({
             }
           />
         </div>
-        <div className="rounded-sm border border-dashed border-panel-border bg-panel-deep px-3 py-2 text-copy-muted text-xs leading-5">
-          {references.length > 0
-            ? references.map((reference) => reference.label).join(", ")
-            : "No project data referenced yet. Reference insertion is enabled with the evidence workflow."}
-        </div>
+        {references.length > 0 ? (
+          <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0" aria-label={field.label}>
+            {references.map((reference) => (
+              <li
+                className="flex items-center gap-1 rounded-sm border border-panel-border bg-panel-deep px-2 py-1 text-copy-secondary text-xs"
+                key={`${reference.kind}:${reference.id}`}
+              >
+                <span>{reference.label}</span>
+                <Button
+                  className="icon-control h-6 w-6"
+                  type="button"
+                  aria-label={`Remove project reference ${reference.label}`}
+                  onClick={() =>
+                    onChange({
+                      type: "project_references",
+                      value: references.filter(
+                        (existing) =>
+                          existing.kind !== reference.kind || existing.id !== reference.id,
+                      ),
+                    })
+                  }
+                >
+                  <IconX size={12} stroke={1.7} aria-hidden="true" />
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="m-0 rounded-sm border border-dashed border-panel-border bg-panel-deep px-3 py-2 text-copy-muted text-xs leading-5">
+            No project references added.
+          </p>
+        )}
         <GuidedFieldDescription field={field} />
-        <GuidedFieldReadiness
-          field={field}
-          validationMessage={validationMessage}
-          validationVisible={showValidation}
-        />
-        <GuidedFieldError message={validationMessage} visible={showValidation} />
-      </Field.Root>
-    );
-  }
-  const text = value?.type === "text" ? value.value : "";
-  if (field.kind === "confidence") {
-    return (
-      <Field.Root className="grid gap-1.5" {...commonRootProps}>
-        <Field.Label
-          className="font-medium text-copy-secondary text-xs"
-          nativeLabel={false}
-          render={<span />}
-        >
-          {label}
-        </Field.Label>
-        <SelectField
-          ariaLabel={label}
-          onChange={(next) => onChange({ type: "text", value: next })}
-          options={confidenceOptions}
-          placeholder="Choose confidence"
-          required={field.required}
-          value={text || null}
-        />
-        <GuidedFieldDescription field={field} />
-        <GuidedFieldReadiness
-          field={field}
-          validationMessage={validationMessage}
-          validationVisible={showValidation}
-        />
-        <GuidedFieldError message={validationMessage} visible={showValidation} />
-      </Field.Root>
-    );
-  }
-  if (field.kind === "choice") {
-    const options = (field.options ?? []).map((option) => ({ value: option, label: option }));
-    return (
-      <Field.Root className="grid gap-1.5" {...commonRootProps}>
-        <Field.Label
-          className="font-medium text-copy-secondary text-xs"
-          nativeLabel={false}
-          render={<span />}
-        >
-          {label}
-        </Field.Label>
-        <SelectField
-          ariaLabel={label}
-          onChange={(next) => onChange({ type: "text", value: next })}
-          options={options}
-          placeholder={`Choose ${field.label.toLowerCase()}`}
-          required={field.required}
-          value={text || null}
-        />
-        <GuidedFieldDescription field={field} />
-        <GuidedFieldReadiness
-          field={field}
-          validationMessage={validationMessage}
-          validationVisible={showValidation}
-        />
-        <GuidedFieldError message={validationMessage} visible={showValidation} />
-      </Field.Root>
-    );
-  }
-  if (field.kind === "long_text" || field.kind === "short_text") {
-    return (
-      <Field.Root className="grid gap-1.5" {...commonRootProps}>
-        <Field.Label className="font-medium text-copy-secondary text-xs">{label}</Field.Label>
-        <Field.Control
-          aria-label={label}
-          autoComplete="off"
-          className={`${field.kind === "long_text" ? "min-h-28" : "min-h-16"} resize-y rounded-sm border border-panel-border bg-panel-deep px-2.5 py-2 font-normal text-copy-primary text-sm leading-6 outline-none focus:border-accent`}
-          maxLength={field.kind === "short_text" ? 500 : 100_000}
-          render={<textarea rows={field.kind === "long_text" ? 5 : 2} />}
-          value={text}
-          required={field.required}
-          onValueChange={(next) => onChange({ type: "text", value: next })}
-        />
-        <GuidedFieldDescription field={field} />
-        <GuidedFieldReadiness
-          field={field}
-          validationMessage={validationMessage}
-          validationVisible={showValidation}
-        />
-        <GuidedFieldError message={validationMessage} visible={showValidation} />
-      </Field.Root>
-    );
-  }
-  if (field.kind === "date") {
-    return (
-      <Field.Root className="grid gap-1.5" {...commonRootProps}>
-        <Field.Label className="font-medium text-copy-secondary text-xs">{label}</Field.Label>
-        <Field.Control
-          aria-label={label}
-          autoComplete="off"
-          className="h-9 rounded-sm border border-panel-border bg-panel-deep px-2.5 font-normal text-copy-primary text-sm outline-none focus:border-accent"
-          type="date"
-          value={text}
-          required={field.required}
-          onValueChange={(next) => onChange({ type: "text", value: next })}
-        />
-        <GuidedFieldDescription field={field} />
-        <GuidedFieldReadiness
-          field={field}
-          validationMessage={validationMessage}
-          validationVisible={showValidation}
-        />
         <GuidedFieldError message={validationMessage} visible={showValidation} />
       </Field.Root>
     );
@@ -903,19 +1138,6 @@ function GuidedFieldDescription({ field }: { field: ReportTemplateField }) {
       {field.help_text ?? reportFieldProjectSource(field.label)}
     </Field.Description>
   );
-}
-
-function GuidedFieldReadiness({
-  field,
-  validationMessage,
-  validationVisible,
-}: {
-  field: ReportTemplateField;
-  validationMessage: string | null;
-  validationVisible: boolean;
-}) {
-  if (!field.required || !validationMessage || validationVisible) return null;
-  return <span className="text-[11px] text-accent-hover">Required before publishing</span>;
 }
 
 function GuidedFieldError({ message, visible }: { message: string | null; visible: boolean }) {
@@ -932,23 +1154,23 @@ function reportTitleValidationMessage(title: string): string | null {
   return null;
 }
 
-function publicationValidationMessages(
+function publicationHardValidationIssues(
   title: string,
   template: ReportTemplateDefinition,
   includedSections: readonly string[],
   dispositions: Record<string, ReportSectionDisposition>,
   fields: Record<string, GuidedReportFieldValue>,
-): string[] {
-  const messages: string[] = [];
+): Array<{ fieldKey: string; message: string }> {
+  const messages: Array<{ fieldKey: string; message: string }> = [];
   const titleMessage = reportTitleValidationMessage(title);
-  if (titleMessage) messages.push(titleMessage);
+  if (titleMessage) messages.push({ fieldKey: "report_title", message: titleMessage });
   const included = new Set(includedSections);
   for (const section of template.sections) {
     if (!included.has(section.key)) continue;
     if ((dispositions[section.key] ?? "active") === "not_applicable") continue;
     for (const field of section.fields) {
-      const message = guidedFieldValidationMessage(field, fields[field.key]);
-      if (message) messages.push(message);
+      const message = guidedFieldHardValidationMessage(field, fields[field.key]);
+      if (message) messages.push({ fieldKey: field.key, message });
     }
   }
   return messages;
@@ -958,26 +1180,21 @@ function guidedSectionStatus(
   section: ReportTemplateSection,
   fields: Record<string, GuidedReportFieldValue>,
   disposition: ReportSectionDisposition,
-): { kind: "complete" | "needs-input" | "optional" | "not-applicable"; label: string } {
+): { kind: "ready" | "in-progress" | "empty" | "not-applicable"; label: string } {
   if (disposition === "not_applicable") {
     return { kind: "not-applicable", label: "Not applicable" };
   }
-  const requiredIssues = section.fields.filter(
-    (field) => field.required && guidedFieldValidationMessage(field, fields[field.key]),
-  ).length;
-  if (requiredIssues > 0) {
-    return {
-      kind: "needs-input",
-      label: `${requiredIssues} required`,
-    };
-  }
-  if (
-    section.optional &&
-    !section.fields.some((field) => guidedFieldHasPublicationContent(fields[field.key]))
-  ) {
-    return { kind: "optional", label: "Optional" };
-  }
-  return { kind: "complete", label: "Complete" };
+  const hasContent = section.fields.some((field) =>
+    guidedFieldHasPublicationContent(fields[field.key]),
+  );
+  if (!hasContent) return { kind: "empty", label: "Empty" };
+  const needsRecommendation = section.fields.some(
+    (field) =>
+      guidedFieldRecommendedMissing(field, fields[field.key]) ||
+      guidedFieldHardValidationMessage(field, fields[field.key]),
+  );
+  if (needsRecommendation) return { kind: "in-progress", label: "In progress" };
+  return { kind: "ready", label: "Ready" };
 }
 
 function guidedFieldHasPublicationContent(value: GuidedReportFieldValue | undefined): boolean {
@@ -985,53 +1202,110 @@ function guidedFieldHasPublicationContent(value: GuidedReportFieldValue | undefi
   if (value.type === "text") return Boolean(value.value.trim());
   if (value.type === "narrative") return narrativeHasPublicationContent(value.value);
   if (value.type === "project_references") return value.value.length > 0;
-  return value.value.some((row) => Object.values(row).some((cell) => Boolean(cell.trim())));
+  const rows = value.type === "linked_rows" ? value.value.rows : value.value;
+  return rows.some((row) => Object.values(row).some((cell) => Boolean(cell.trim())));
 }
 
-function guidedFieldValidationMessage(
+function guidedFieldRecommendedMissing(
   field: ReportTemplateField,
   value: GuidedReportFieldValue | undefined,
-): string | null {
+): boolean {
+  if (!field.required) return false;
   if (field.kind === "narrative") {
     const root = value?.type === "narrative" ? value.value : emptyNarrative();
-    return field.required && !narrativeHasText(root) ? `Add content to ${field.label}.` : null;
+    return !narrativeHasText(root);
   }
   if (field.kind === "repeatable_rows") {
-    const rows = value?.type === "rows" ? value.value : [];
-    if (
-      field.required &&
-      !rows.some((row) => Object.values(row).some((cell) => Boolean(cell.trim())))
-    ) {
-      return `Add at least one row to ${field.label}.`;
-    }
-    if (rows.some((row) => Object.values(row).some((cell) => cell.length > 100_000))) {
-      return `Keep each ${field.label} table cell to 100,000 characters or fewer.`;
-    }
-    return null;
+    const rows =
+      value?.type === "rows" ? value.value : value?.type === "linked_rows" ? value.value.rows : [];
+    return !rows.some((row) => Object.values(row).some((cell) => Boolean(cell.trim())));
   }
   if (field.kind === "project_references") {
     const references = value?.type === "project_references" ? value.value : [];
-    return field.required && references.length === 0
-      ? `Add at least one project reference to ${field.label}.`
+    return references.length === 0;
+  }
+  const text = value?.type === "text" ? value.value : "";
+  return !text.trim();
+}
+
+function guidedFieldHardValidationMessage(
+  field: ReportTemplateField,
+  value: GuidedReportFieldValue | undefined,
+): string | null {
+  if (field.kind === "repeatable_rows") {
+    const rows =
+      value?.type === "rows" ? value.value : value?.type === "linked_rows" ? value.value.rows : [];
+    return rows.some((row) => Object.values(row).some((cell) => cell.length > 100_000))
+      ? `Keep each ${field.label} table cell to 100,000 characters or fewer.`
       : null;
   }
-
+  if (field.kind === "narrative" || field.kind === "project_references") return null;
   const text = value?.type === "text" ? value.value : "";
   if (field.kind === "date") {
-    if (!text.trim()) return field.required ? `Choose ${field.label}.` : null;
+    if (!text.trim()) return null;
     return isValidCalendarDate(text) ? null : `Choose a valid date for ${field.label}.`;
   }
   if (field.kind === "confidence") {
-    if (!text.trim()) return field.required ? `Choose ${field.label}.` : null;
+    if (!text.trim()) return null;
     return confidenceOptions.some((option) => option.value === text)
       ? null
       : `Choose a valid value for ${field.label}.`;
   }
-  if (field.required && !text.trim()) return `Enter ${field.label}.`;
+  if (field.kind === "choice" && text.trim() && !field.options?.includes(text)) {
+    return `Choose a valid value for ${field.label}.`;
+  }
   const limit = field.kind === "short_text" ? 500 : 100_000;
   return text.length > limit
     ? `Keep ${field.label} to ${limit.toLocaleString("en")} characters or fewer.`
     : null;
+}
+
+function focusReportField(fieldKey: string): void {
+  if (fieldKey === "report_title") {
+    document.querySelector<HTMLElement>('[aria-label="Report title"]')?.focus();
+    return;
+  }
+  const direct = document.querySelector<HTMLElement>(`[data-report-field-key="${fieldKey}"]`);
+  const focusable = direct?.matches("input, textarea, button, [contenteditable='true']")
+    ? direct
+    : direct?.querySelector<HTMLElement>("input, textarea, button, [contenteditable='true']");
+  if (focusable) {
+    focusable.focus();
+    return;
+  }
+  const detailsTrigger = [...document.querySelectorAll<HTMLElement>("[data-details-fields]")].find(
+    (element) => element.dataset.detailsFields?.split(" ").includes(fieldKey),
+  );
+  if (!detailsTrigger) return;
+  detailsTrigger.click();
+  window.setTimeout(
+    () => document.querySelector<HTMLElement>(`[data-report-field-key="${fieldKey}"]`)?.focus(),
+    0,
+  );
+}
+
+function SectionHelp({ guidance, title }: { guidance: string; title: string }) {
+  return (
+    <Popover.Root>
+      <Popover.Trigger
+        className="control-button px-2 py-1 text-[10px]"
+        aria-label={`Help for ${title}`}
+      >
+        <IconHelp size={13} stroke={1.7} aria-hidden="true" />
+        Help
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner align="end" className="z-50" sideOffset={6}>
+          <Popover.Popup className="max-w-sm rounded-sm border border-panel-border bg-panel-raised p-3 text-copy-muted text-xs leading-5 shadow-xl outline-none">
+            <Popover.Title className="mb-1 font-medium text-copy-primary text-xs">
+              {title}
+            </Popover.Title>
+            <Popover.Description className="m-0">{guidance}</Popover.Description>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
 }
 
 function narrativeHasText(
@@ -1064,561 +1338,343 @@ function isLeapYear(year: number): boolean {
   return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
 }
 
-function GuidedNarrativeInput({
-  ariaLabel,
-  onChange,
-  projectId,
-  value,
-}: {
-  ariaLabel: string;
-  onChange: (value: DocumentRoot) => void;
-  projectId: string;
-  value: DocumentRoot;
-}) {
-  const notices = useVaultNotices();
-  const [linkOpen, setLinkOpen] = useState(false);
-  const [linkLabel, setLinkLabel] = useState("");
-  const [linkUrl, setLinkUrl] = useState("");
-  const [linkError, setLinkError] = useState<string | null>(null);
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
-  const [evidenceFiles, setEvidenceFiles] = useState<EvidenceFileMetadata[]>([]);
-  const [evidenceLoading, setEvidenceLoading] = useState(false);
-  const [evidenceImporting, setEvidenceImporting] = useState(false);
-  const [evidenceError, setEvidenceError] = useState<string | null>(null);
-  const [evidenceDestination, setEvidenceDestination] =
-    useState<EvidenceImageDestination>("inline");
-  const [customAppendixTitle, setCustomAppendixTitle] = useState("");
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ link: { autolink: false, openOnClick: false } }),
-      createEvidenceImageExtension(projectId),
-    ],
-    content: value,
-    immediatelyRender: false,
-    editorProps: {
-      attributes: { "aria-label": ariaLabel, class: "guided-narrative-editor" },
-    },
-    onUpdate: ({ editor: current }) => onChange(current.getJSON() as DocumentRoot),
-  });
-  const openEvidenceLink = () => {
-    if (!editor) return;
-    const { from, to } = editor.state.selection;
-    const selectedText = editor.state.doc.textBetween(from, to, " ").trim();
-    const attributes: unknown = editor.getAttributes("link");
-    const currentHref =
-      typeof attributes === "object" &&
-      attributes !== null &&
-      typeof Reflect.get(attributes, "href") === "string"
-        ? (Reflect.get(attributes, "href") as string)
-        : "";
-    setLinkLabel(selectedText);
-    setLinkUrl(currentHref);
-    setLinkError(null);
-    setLinkOpen(true);
-  };
-  const insertEvidenceLink = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
-    event.preventDefault();
-    const label = linkLabel.trim();
-    const href = normalizeEditorLink(linkUrl);
-    if (!label) {
-      setLinkError("Enter the human-readable evidence label shown in the report.");
-      return;
-    }
-    if (!href) {
-      setLinkError("Use an HTTP, HTTPS, email, anchor, or local backup link.");
-      return;
-    }
-    editor
-      ?.chain()
-      .focus()
-      .deleteSelection()
-      .insertContent({
-        type: "text",
-        text: label,
-        marks: [{ type: "link", attrs: { href } }],
-      })
-      .run();
-    setLinkOpen(false);
-    setLinkError(null);
-  };
-  const openEvidenceImage = async () => {
-    setEvidenceOpen(true);
-    setEvidenceLoading(true);
-    setEvidenceError(null);
-    try {
-      setEvidenceFiles(
-        (await listEvidenceFiles(projectId)).filter((file) => file.mediaType.startsWith("image/")),
-      );
-    } catch (cause) {
-      setEvidenceError(guidedReportErrorMessage(cause));
-    } finally {
-      setEvidenceLoading(false);
-    }
-  };
-  const insertEvidenceImage = (evidence: EvidenceFileMetadata) => {
-    const appendix = evidenceAppendix(evidenceDestination, customAppendixTitle);
-    if (evidenceDestination !== "inline" && !appendix) {
-      setEvidenceError("Enter a title for the custom appendix.");
-      return;
-    }
-    editor
-      ?.chain()
-      .focus()
-      .insertContent({
-        type: "evidenceImage",
-        attrs: {
-          evidenceId: evidence.id,
-          alt: evidence.title,
-          title: null,
-          placement: appendix ? "appendix" : "inline",
-          appendixKey: appendix?.key ?? null,
-          appendixTitle: appendix?.title ?? null,
-        },
-      })
-      .run();
-    setEvidenceOpen(false);
-  };
-  const importAndInsertEvidenceImage = async () => {
-    setEvidenceImporting(true);
-    setEvidenceError(null);
-    try {
-      const evidence = await importEvidenceImage(projectId);
-      if (!evidence) return;
-      insertEvidenceImage(evidence);
-      notices.add({
-        title: "Evidence image added",
-        description: "The encrypted Evidence file is now referenced by this report.",
-        type: "success",
-      });
-    } catch (cause) {
-      const description = guidedReportErrorMessage(cause);
-      setEvidenceError(description);
-      notices.add({ title: "Evidence image not added", description, type: "info" });
-    } finally {
-      setEvidenceImporting(false);
-    }
-  };
-  return (
-    <>
-      <div className="overflow-hidden rounded-sm border border-panel-border bg-panel-deep focus-within:border-accent">
-        <div
-          className="flex flex-wrap items-center gap-1 border-panel-border border-b bg-panel-base px-2 py-1.5"
-          role="toolbar"
-          aria-label={`${ariaLabel} formatting`}
-        >
-          <NarrativeTool
-            label="Bold"
-            active={editor?.isActive("bold") ?? false}
-            onClick={() => editor?.chain().focus().toggleBold().run()}
-          >
-            <IconBold size={15} aria-hidden="true" />
-          </NarrativeTool>
-          <NarrativeTool
-            label="Italic"
-            active={editor?.isActive("italic") ?? false}
-            onClick={() => editor?.chain().focus().toggleItalic().run()}
-          >
-            <IconItalic size={15} aria-hidden="true" />
-          </NarrativeTool>
-          <NarrativeTool
-            label="Bulleted list"
-            active={editor?.isActive("bulletList") ?? false}
-            onClick={() => editor?.chain().focus().toggleBulletList().run()}
-          >
-            <IconList size={15} aria-hidden="true" />
-          </NarrativeTool>
-          <NarrativeTool
-            label="Numbered list"
-            active={editor?.isActive("orderedList") ?? false}
-            onClick={() => editor?.chain().focus().toggleOrderedList().run()}
-          >
-            <IconListNumbers size={15} aria-hidden="true" />
-          </NarrativeTool>
-          <NarrativeTool
-            label="Block quote"
-            active={editor?.isActive("blockquote") ?? false}
-            onClick={() => editor?.chain().focus().toggleBlockquote().run()}
-          >
-            <IconQuote size={15} aria-hidden="true" />
-          </NarrativeTool>
-          <span className="mx-1 h-5 w-px bg-panel-border" aria-hidden="true" />
-          <NarrativeTool label="Add evidence link" onClick={openEvidenceLink}>
-            <IconLink size={15} aria-hidden="true" />
-            <span>Add evidence link</span>
-          </NarrativeTool>
-          <NarrativeTool label="Add evidence image" onClick={() => void openEvidenceImage()}>
-            <IconPhotoPlus size={15} aria-hidden="true" />
-            <span>Add evidence image</span>
-          </NarrativeTool>
-          <NarrativeTool label="Defang URLs" onClick={() => defangEditorUrls(editor)}>
-            <IconLinkOff size={15} aria-hidden="true" />
-            <span>Defang URLs</span>
-          </NarrativeTool>
-        </div>
-        <div className="guided-narrative text-copy-primary text-sm leading-6">
-          <EditorContent
-            className="guided-narrative-editor-content prose prose-invert prose-sheut max-w-none"
-            editor={editor}
-          />
-        </div>
-      </div>
-      <Dialog.Root open={linkOpen} onOpenChange={setLinkOpen}>
-        <DialogFrame width="compact">
-          <header className="flex h-11 items-center justify-between border-panel-border border-b px-4">
-            <Dialog.Title className="m-0 text-sm font-semibold">Add evidence link</Dialog.Title>
-            <Dialog.Close render={<Button className="icon-control" />} aria-label="Close">
-              <IconX size={16} stroke={1.7} aria-hidden="true" />
-            </Dialog.Close>
-          </header>
-          <form className="grid gap-4 p-4" onSubmit={insertEvidenceLink}>
-            <Dialog.Description className="m-0 text-copy-muted text-xs leading-5">
-              Link to video evidence, an original source, or an exported local backup. The label is
-              what readers see in the report.
-            </Dialog.Description>
-            <label className="grid gap-1.5 font-medium text-copy-secondary text-xs">
-              Evidence label
-              <input
-                className="h-9 rounded-sm border border-panel-border bg-panel-deep px-2.5 font-normal text-copy-primary text-sm outline-none focus:border-accent"
-                value={linkLabel}
-                onChange={(event) => setLinkLabel(event.currentTarget.value)}
-                maxLength={500}
-              />
-            </label>
-            <label className="grid gap-1.5 font-medium text-copy-secondary text-xs">
-              Evidence URL
-              <input
-                className="h-9 rounded-sm border border-panel-border bg-panel-deep px-2.5 font-normal text-copy-primary text-sm outline-none focus:border-accent"
-                value={linkUrl}
-                onChange={(event) => setLinkUrl(event.currentTarget.value)}
-                maxLength={2_048}
-                inputMode="url"
-                placeholder="https://… or /evidence-backups/video.mp4"
-              />
-            </label>
-            {linkError ? (
-              <p className="m-0 text-danger text-xs" role="alert">
-                {linkError}
-              </p>
-            ) : null}
-            <div className="flex justify-end gap-2">
-              <Dialog.Close render={<Button className="control-button" />} type="button">
-                Cancel
-              </Dialog.Close>
-              <Button className="primary-button" type="submit">
-                Insert evidence link
-              </Button>
-            </div>
-          </form>
-        </DialogFrame>
-      </Dialog.Root>
-      <Dialog.Root open={evidenceOpen} onOpenChange={setEvidenceOpen}>
-        <DialogFrame width="compact">
-          <header className="flex h-11 items-center justify-between border-panel-border border-b px-4">
-            <Dialog.Title className="m-0 text-sm font-semibold">Add evidence image</Dialog.Title>
-            <Dialog.Close render={<Button className="icon-control" />} aria-label="Close">
-              <IconX size={16} stroke={1.7} aria-hidden="true" />
-            </Dialog.Close>
-          </header>
-          <div className="grid gap-3 p-4">
-            <Dialog.Description className="m-0 text-copy-muted text-xs leading-5">
-              Reuse an encrypted project Evidence file, or import a new image into Evidence once.
-              The report stores only its reference.
-            </Dialog.Description>
-            <SelectField
-              ariaLabel="Evidence image placement"
-              label="Placement"
-              onChange={(value) => setEvidenceDestination(value as EvidenceImageDestination)}
-              options={evidencePlacementOptions}
-              placeholder="Choose placement"
-              value={evidenceDestination}
-            />
-            {evidenceDestination === "custom" ? (
-              <label className="grid gap-1.5 text-copy-secondary text-xs">
-                Appendix title
-                <input
-                  className="control-input"
-                  maxLength={120}
-                  placeholder="For example, Hosting provider records"
-                  value={customAppendixTitle}
-                  onChange={(event) => setCustomAppendixTitle(event.currentTarget.value)}
-                />
-              </label>
-            ) : null}
-            {evidenceLoading ? (
-              <p className="m-0 text-copy-muted text-xs" role="status">
-                Loading project evidence…
-              </p>
-            ) : evidenceFiles.length > 0 ? (
-              <ul
-                className="m-0 grid max-h-60 list-none gap-1 overflow-y-auto p-0"
-                aria-label="Image evidence"
-              >
-                {evidenceFiles.map((evidence) => (
-                  <li key={evidence.id}>
-                    <Button
-                      className="control-button w-full justify-start"
-                      type="button"
-                      onClick={() => insertEvidenceImage(evidence)}
-                      aria-label={`Insert ${evidence.title}`}
-                    >
-                      <IconPhotoPlus size={15} aria-hidden="true" />
-                      <span className="truncate">{evidence.title}</span>
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="m-0 rounded-sm border border-dashed border-panel-border bg-panel-deep p-3 text-copy-muted text-xs">
-                No image evidence has been imported yet.
-              </p>
-            )}
-            {evidenceError ? (
-              <p className="m-0 text-danger text-xs" role="alert">
-                {evidenceError}
-              </p>
-            ) : null}
-            <div className="flex justify-end gap-2">
-              <Dialog.Close render={<Button className="control-button" />} type="button">
-                Cancel
-              </Dialog.Close>
-              <Button
-                className="primary-button"
-                disabled={evidenceImporting}
-                type="button"
-                onClick={() => void importAndInsertEvidenceImage()}
-              >
-                <IconPlus size={15} aria-hidden="true" />
-                {evidenceImporting ? "Importing…" : "Import image as evidence"}
-              </Button>
-            </div>
-          </div>
-        </DialogFrame>
-      </Dialog.Root>
-    </>
-  );
-}
-
-function evidenceAppendix(
-  destination: EvidenceImageDestination,
-  customTitle: string,
-): { key: string; title: string } | null {
-  if (destination === "inline") return null;
-  const title =
-    destination === "evidence_images"
-      ? "Evidence images"
-      : destination === "indicators_observables"
-        ? "Indicators and observables"
-        : destination === "sources_methodology"
-          ? "Sources and methodology"
-          : customTitle.trim();
-  if (!title) return null;
-  const key =
-    destination === "custom"
-      ? title
-          .toLocaleLowerCase("en")
-          .normalize("NFKD")
-          .replace(/[^a-z0-9]+/g, "_")
-          .replace(/^_+|_+$/g, "")
-          .slice(0, 64) || "custom_appendix"
-      : destination;
-  return { key, title };
-}
-
-function NarrativeTool({
-  active = false,
-  children,
-  label,
-  onClick,
-}: {
-  active?: boolean;
-  children: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <Button
-      aria-label={label}
-      aria-pressed={active}
-      className="control-button min-h-7 px-2"
-      type="button"
-      onClick={onClick}
-    >
-      {children}
-    </Button>
-  );
-}
-
-function defangEditorUrls(editor: Editor | null): void {
-  if (!editor) return;
-  editor
-    .chain()
-    .focus()
-    .command(({ state, tr }) => {
-      const replacements: Array<{ from: number; to: number; value: string }> = [];
-      state.doc.descendants((node, position) => {
-        if (!node.isText || !node.text) return;
-        const value = defangUrls(node.text);
-        if (value !== node.text) {
-          replacements.push({ from: position, to: position + node.nodeSize, value });
-        }
-      });
-      for (const replacement of replacements.reverse()) {
-        tr.insertText(replacement.value, replacement.from, replacement.to);
-      }
-      return replacements.length > 0;
-    })
-    .run();
-}
-
 function GuidedRows({
   field,
   onChange,
   projectId,
+  references,
   rows,
 }: {
   field: ReportTemplateField;
-  onChange: (rows: Array<Record<string, string>>) => void;
+  onChange: (rows: Array<Record<string, string>>, references: GuidedReportRowReference[]) => void;
   projectId: string;
+  references: GuidedReportRowReference[];
   rows: Array<Record<string, string>>;
 }) {
-  const [rowKeys, setRowKeys] = useState(() => rows.map(() => nextTableRowKey(field.key)));
-  const appendRow = (row: Record<string, string>) => {
-    setRowKeys((current) => [...current, nextTableRowKey(field.key)]);
-    onChange([...rows, row]);
+  const nextRowKey = useRef(rows.length);
+  const [rowKeys, setRowKeys] = useState(() =>
+    rows.map((_, position) => `${field.key}-record-${position}`),
+  );
+  const [open, setOpen] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [removingIndex, setRemovingIndex] = useState<number | null>(null);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [draftReferences, setDraftReferences] = useState<
+    Record<string, GuidedReportRowReference["reference"]>
+  >({});
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const noun = structuredRecordNoun(field.label);
+  const startAdd = () => {
+    setEditingIndex(null);
+    setDraft(Object.fromEntries(field.columns.map((column) => [column, ""])));
+    setDraftReferences({});
   };
-  const updateCell = (rowIndex: number, column: string, value: string) => {
-    onChange(
-      rows.map((existing, index) =>
-        index === rowIndex ? { ...existing, [column]: value } : existing,
+  const startEdit = (rowIndex: number) => {
+    setEditingIndex(rowIndex);
+    setDraft(
+      Object.fromEntries(field.columns.map((column) => [column, rows[rowIndex]?.[column] ?? ""])),
+    );
+    setDraftReferences(
+      Object.fromEntries(
+        references
+          .filter((reference) => reference.rowIndex === rowIndex)
+          .map((reference) => [reference.column, reference.reference]),
       ),
     );
   };
-  const addRow = () => appendRow(Object.fromEntries(field.columns.map((column) => [column, ""])));
+  const dialogRowIndex = editingIndex ?? rows.length;
+  const removeRecord = () => {
+    if (removingIndex === null) return;
+    setRowKeys((current) => current.filter((_, index) => index !== removingIndex));
+    onChange(
+      rows.filter((_, index) => index !== removingIndex),
+      references
+        .filter((reference) => reference.rowIndex !== removingIndex)
+        .map((reference) => ({
+          ...reference,
+          rowIndex:
+            reference.rowIndex > removingIndex ? reference.rowIndex - 1 : reference.rowIndex,
+        })),
+    );
+    setRemovingIndex(null);
+    window.setTimeout(() => addButtonRef.current?.focus(), 0);
+  };
+  const removingTitle = removingIndex === null ? "" : structuredRecordTitle(rows[removingIndex]);
   return (
-    <div className="grid gap-2">
-      <div className="flex items-center justify-between gap-3">
-        <span className="font-medium text-copy-secondary text-xs">
-          {field.required ? `${field.label} (required)` : field.label}
-        </span>
-        <Button className="control-button" type="button" onClick={addRow}>
-          <IconPlus size={14} stroke={1.7} aria-hidden="true" />
-          Add row
-        </Button>
-      </div>
-      <details className="rounded-sm border border-panel-border bg-panel-deep px-3 py-2 text-xs">
-        <summary className="cursor-pointer text-copy-secondary">
-          What belongs in each column?
-        </summary>
-        <dl className="mt-2 grid gap-2">
-          {field.columns.map((column) => (
-            <div className="grid gap-0.5" key={column}>
-              <dt className="font-medium text-copy-secondary">{column}</dt>
-              <dd className="m-0 text-copy-faint text-[11px] leading-4">
-                {reportFieldProjectSource(`${field.label} — ${column}`)}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </details>
-      {rows.length === 0 ? (
-        <p className="m-0 rounded-sm border border-dashed border-panel-border px-3 py-3 text-copy-faint text-xs">
-          No rows yet.
-        </p>
-      ) : (
-        <div className="guided-report-table-scroll grid gap-2 overflow-x-auto">
-          {rows.map((row, rowIndex) => (
-            <fieldset
-              className="guided-report-table-row m-0 min-w-0 border-0 p-0"
-              data-layout={
-                normalizeReportColumn(field.label) === "datasourcesandcitations"
-                  ? "source-citation"
-                  : "table-row"
-              }
-              key={rowKeys[rowIndex]}
-              aria-label={
-                normalizeReportColumn(field.label) === "datasourcesandcitations"
-                  ? `Data source ${rowIndex + 1}`
-                  : `${field.label} row ${rowIndex + 1}`
-              }
-              style={
-                normalizeReportColumn(field.label) === "datasourcesandcitations"
-                  ? undefined
-                  : {
-                      gridTemplateColumns: `repeat(${Math.max(field.columns.length, 1)}, minmax(10rem, 1fr)) auto`,
-                      minWidth: `${Math.max(field.columns.length, 1) * 10 + 4}rem`,
-                    }
-              }
+    <>
+      <Dialog.Root
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (!nextOpen) setEditingIndex(null);
+        }}
+      >
+        <div className="grid gap-2" data-report-field-key={field.key}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium text-copy-secondary text-xs">{field.label}</span>
+            <Dialog.Trigger
+              render={<Button className="control-button" ref={addButtonRef} />}
+              type="button"
+              onClick={startAdd}
             >
-              {normalizeReportColumn(field.label) === "datasourcesandcitations" ? (
-                <div className="guided-report-table-row-header">
-                  <span>Data source {rowIndex + 1}</span>
-                  <Button
-                    className="workspace-tab-action"
-                    type="button"
-                    aria-label={`Remove ${field.label} row ${rowIndex + 1}`}
-                    onClick={() => {
-                      setRowKeys((current) => current.filter((_, index) => index !== rowIndex));
-                      onChange(rows.filter((_, index) => index !== rowIndex));
-                    }}
+              <IconPlus size={14} stroke={1.7} aria-hidden="true" />
+              Add {noun}
+            </Dialog.Trigger>
+          </div>
+          {rows.length === 0 ? (
+            <p className="m-0 rounded-sm border border-dashed border-panel-border px-3 py-3 text-copy-faint text-xs">
+              No {structuredRecordNoun(field.label, true)} added. Add one when it strengthens the
+              section.
+            </p>
+          ) : (
+            <ul className="m-0 grid list-none gap-2 p-0" aria-label={field.label}>
+              {rows.map((row, rowIndex) => {
+                const rowKey = rowKeys.at(rowIndex);
+                const populated = Object.entries(row).filter(([, value]) => value.trim());
+                const title = structuredRecordTitle(row);
+                const summary = populated.filter(([, value]) => value !== title).slice(0, 3);
+                const linkedReferences = references.filter(
+                  (reference) => reference.rowIndex === rowIndex,
+                );
+                return (
+                  <li
+                    className="rounded-sm border border-panel-border bg-panel-deep p-3 transition-colors hover:border-panel-strong"
+                    key={rowKey}
                   >
-                    <IconTrash size={13} stroke={1.7} aria-hidden="true" />
-                    Remove
-                  </Button>
-                </div>
-              ) : null}
-              {field.columns.map((column) => (
-                <div
-                  className="guided-report-table-cell grid min-w-0 gap-1"
-                  data-column={normalizeReportColumn(column)}
-                  key={column}
-                >
-                  <GuidedRowCellControl
-                    column={column}
-                    fieldLabel={field.label}
-                    onChange={(value) => updateCell(rowIndex, column, value)}
-                    rowIndex={rowIndex}
-                    value={row[column] ?? ""}
-                  />
-                  {columnProjectDataConstraint(field.label, column) ? (
-                    <div className="flex justify-start">
-                      <ProjectDataPicker
-                        {...columnProjectDataConstraint(field.label, column)}
-                        contextLabel={`${field.label} — ${column}`}
-                        projectId={projectId}
-                        triggerLabel={`Choose project data for ${field.label} row ${rowIndex + 1} ${column}`}
-                        triggerText={`Choose ${column.toLocaleLowerCase()}`}
-                        onInsert={(reference) =>
-                          updateCell(
-                            rowIndex,
-                            column,
-                            reportValueForColumn(reference, column, true),
-                          )
-                        }
-                      />
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <h4 className="m-0 truncate font-medium text-copy-primary text-sm">
+                          {title}
+                        </h4>
+                        <p className="mt-0.5 mb-2 text-[10px] text-copy-faint uppercase tracking-wide">
+                          {noun} {rowIndex + 1}
+                        </p>
+                        {linkedReferences.length > 0 ? (
+                          <p className="mt-0 mb-2 text-[11px] text-accent">
+                            {linkedReferences.length} linked project reference
+                            {linkedReferences.length === 1 ? "" : "s"} · included in publication
+                            provenance
+                          </p>
+                        ) : null}
+                        <dl className="m-0 grid gap-1 sm:grid-cols-3">
+                          {summary.length > 0 ? (
+                            summary.map(([column, cell]) => (
+                              <div className="min-w-0" key={column}>
+                                <dt className="text-[10px] text-copy-faint uppercase tracking-wide">
+                                  {column}
+                                </dt>
+                                <dd className="m-0 truncate text-copy-primary text-xs">{cell}</dd>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="sm:col-span-3">
+                              <dt className="sr-only">Record status</dt>
+                              <dd className="m-0 text-copy-faint text-xs">
+                                Open the record to add supporting attributes.
+                              </dd>
+                            </div>
+                          )}
+                        </dl>
+                      </div>
+                      <div className="flex shrink-0 gap-1">
+                        <Dialog.Trigger
+                          render={<Button className="control-button" />}
+                          type="button"
+                          aria-label={`Edit ${noun} ${title}`}
+                          onClick={() => startEdit(rowIndex)}
+                        >
+                          Edit
+                        </Dialog.Trigger>
+                        <Button
+                          className="icon-control"
+                          type="button"
+                          aria-label={`Remove ${noun} ${title}`}
+                          onClick={() => setRemovingIndex(rowIndex)}
+                        >
+                          <IconTrash size={14} stroke={1.7} aria-hidden="true" />
+                        </Button>
+                      </div>
                     </div>
-                  ) : null}
-                </div>
-              ))}
-              {normalizeReportColumn(field.label) !== "datasourcesandcitations" ? (
-                <Button
-                  className="control-button mt-5 self-start"
-                  type="button"
-                  aria-label={`Remove ${field.label} row ${rowIndex + 1}`}
-                  onClick={() => {
-                    setRowKeys((current) => current.filter((_, index) => index !== rowIndex));
-                    onChange(rows.filter((_, index) => index !== rowIndex));
-                  }}
-                >
-                  <IconTrash size={14} stroke={1.7} aria-hidden="true" />
-                  Remove row
-                </Button>
-              ) : null}
-            </fieldset>
-          ))}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
-      )}
-    </div>
+        <DialogFrame width="wide">
+          <header className="flex h-11 items-center justify-between border-panel-border border-b px-4">
+            <Dialog.Title className="m-0 text-sm font-semibold">
+              {editingIndex === null ? `Add ${noun}` : `Edit ${noun}`}
+            </Dialog.Title>
+            <Dialog.Close render={<Button className="icon-control" />} aria-label="Close">
+              <IconX size={16} stroke={1.7} aria-hidden="true" />
+            </Dialog.Close>
+          </header>
+          <Dialog.Description className="sr-only">
+            Edit one structured record. Cancel closes the dialog without changing the report.
+          </Dialog.Description>
+          <div className="grid max-h-[70vh] gap-4 overflow-y-auto p-4 sm:grid-cols-2">
+            {field.columns.map((column) => (
+              <div className="grid min-w-0 content-start gap-1.5" key={column}>
+                <GuidedRowCellControl
+                  column={column}
+                  fieldLabel={field.label}
+                  onChange={(value) => {
+                    setDraft((current) => ({ ...current, [column]: value }));
+                    setDraftReferences((current) => {
+                      const next = { ...current };
+                      delete next[column];
+                      return next;
+                    });
+                  }}
+                  rowIndex={dialogRowIndex}
+                  value={draft[column] ?? ""}
+                />
+                {columnProjectDataConstraint(field.label, column) ? (
+                  <div className="grid gap-1.5">
+                    <ProjectDataPicker
+                      {...columnProjectDataConstraint(field.label, column)}
+                      contextLabel={`${field.label} — ${column}`}
+                      projectId={projectId}
+                      triggerLabel={`Choose project data for ${field.label} row ${dialogRowIndex + 1} ${column}`}
+                      triggerText={`Choose ${column.toLocaleLowerCase()}`}
+                      onInsert={(reference) => {
+                        setDraft((current) => ({
+                          ...current,
+                          [column]: reportValueForColumn(reference, column, true),
+                        }));
+                        setDraftReferences((current) => ({
+                          ...current,
+                          [column]: {
+                            kind: reference.kind,
+                            id: reference.id,
+                            label: reference.label,
+                          },
+                        }));
+                      }}
+                    />
+                    {draftReferences[column] ? (
+                      <p className="m-0 text-[11px] text-accent">
+                        Linked to {draftReferences[column].label}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                <p className="m-0 text-copy-faint text-[11px] leading-4">
+                  {reportFieldProjectSource(`${field.label} — ${column}`)}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2 border-panel-border border-t p-4">
+            <Dialog.Close render={<Button className="control-button" />} type="button">
+              Cancel
+            </Dialog.Close>
+            <Button
+              className="primary-button"
+              type="button"
+              onClick={() => {
+                if (editingIndex === null) {
+                  const key = `${field.key}-record-${nextRowKey.current}`;
+                  nextRowKey.current += 1;
+                  setRowKeys((current) => [...current, key]);
+                  const rowIndex = rows.length;
+                  onChange(
+                    [...rows, draft],
+                    [
+                      ...references,
+                      ...Object.entries(draftReferences).map(([column, reference]) => ({
+                        rowIndex,
+                        column,
+                        reference,
+                      })),
+                    ],
+                  );
+                } else {
+                  onChange(
+                    rows.map((row, index) => (index === editingIndex ? draft : row)),
+                    [
+                      ...references.filter((reference) => reference.rowIndex !== editingIndex),
+                      ...Object.entries(draftReferences).map(([column, reference]) => ({
+                        rowIndex: editingIndex,
+                        column,
+                        reference,
+                      })),
+                    ],
+                  );
+                }
+                setOpen(false);
+              }}
+            >
+              Save record
+            </Button>
+          </div>
+        </DialogFrame>
+      </Dialog.Root>
+      <AlertDialog.Root
+        open={removingIndex !== null}
+        onOpenChange={(nextOpen) => {
+          if (!nextOpen) setRemovingIndex(null);
+        }}
+      >
+        <AlertDialogFrame width="compact">
+          <div className="grid gap-4 p-4">
+            <AlertDialog.Title className="m-0 text-sm font-semibold">
+              Remove {noun}?
+            </AlertDialog.Title>
+            <AlertDialog.Description className="m-0 text-copy-muted text-xs leading-5">
+              This removes “{removingTitle}” from the report section. The underlying project
+              intelligence or evidence is not deleted.
+            </AlertDialog.Description>
+            <div className="flex justify-end gap-2 border-panel-border border-t pt-3">
+              <AlertDialog.Close render={<Button className="control-button" />}>
+                Cancel
+              </AlertDialog.Close>
+              <Button className="danger-button" type="button" onClick={removeRecord}>
+                Remove {noun}
+              </Button>
+            </div>
+          </div>
+        </AlertDialogFrame>
+      </AlertDialog.Root>
+    </>
   );
+}
+
+function structuredRecordTitle(row: Record<string, string> | undefined): string {
+  return (
+    Object.values(row ?? {})
+      .find((value) => value.trim())
+      ?.trim() ?? "Untitled record"
+  );
+}
+
+function structuredRecordNoun(label: string, plural = false): string {
+  const normalized = normalizeReportColumn(label);
+  const singular = normalized.includes("site")
+    ? "site"
+    : normalized.includes("timeline")
+      ? "event"
+      : normalized.includes("source")
+        ? "source"
+        : normalized.includes("profile")
+          ? "profile"
+          : normalized.includes("identit")
+            ? "identity"
+            : normalized.includes("relationship")
+              ? "relationship"
+              : normalized.includes("certificate")
+                ? "certificate"
+                : normalized.includes("finding")
+                  ? "finding"
+                  : normalized.includes("requirement")
+                    ? "requirement"
+                    : normalized.includes("recommend")
+                      ? "recommendation"
+                      : "record";
+  if (!plural) return singular;
+  if (singular === "identity") return "identities";
+  return `${singular}s`;
 }
 
 function GuidedRowCellControl({
@@ -1679,6 +1735,7 @@ function GuidedRowCellControl({
         {column}
         <textarea
           aria-label={ariaLabel}
+          autoComplete="off"
           className="guided-report-table-textarea"
           maxLength={100_000}
           placeholder={
@@ -1719,6 +1776,7 @@ function GuidedRowCellControl({
         {column}
         <input
           aria-label={ariaLabel}
+          autoComplete="off"
           className="guided-report-table-input"
           type="date"
           value={value}

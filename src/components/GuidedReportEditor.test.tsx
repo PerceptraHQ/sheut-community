@@ -1,12 +1,14 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitForElementToBeRemoved, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { listBrandProfiles } from "../lib/brand-profiles";
 import { listPublicationRecords } from "../lib/documents";
 import {
   type GuidedReport,
+  getGuidedReportReadiness,
   importEvidenceImage,
   listEvidenceFiles,
+  listReportProjectData,
   loadEvidenceImage,
   type ReportTemplateDefinition,
   saveGuidedReport,
@@ -23,7 +25,9 @@ vi.mock("../lib/guided-reports", async (importOriginal) => ({
   saveGuidedReport: vi.fn(),
   importEvidenceImage: vi.fn(),
   listEvidenceFiles: vi.fn(),
+  listReportProjectData: vi.fn(),
   loadEvidenceImage: vi.fn(),
+  getGuidedReportReadiness: vi.fn(),
   updateGuidedReportSectionDisposition: vi.fn(),
 }));
 
@@ -103,6 +107,8 @@ beforeEach(() => {
     <T,>(operation: () => Promise<T>): Promise<T> => operation(),
   );
   vi.mocked(listEvidenceFiles).mockResolvedValue([]);
+  vi.mocked(listReportProjectData).mockResolvedValue([]);
+  vi.mocked(getGuidedReportReadiness).mockResolvedValue([]);
   vi.mocked(loadEvidenceImage).mockRejectedValue(new Error("not rendered in this test"));
   vi.mocked(listBrandProfiles).mockResolvedValue([]);
   vi.mocked(listPublicationRecords).mockResolvedValue([]);
@@ -157,6 +163,10 @@ it("records optional sections as not applicable without making the report incomp
     />,
   );
 
+  await user.click(screen.getByRole("button", { name: /Detections and Signatures/u }));
+  await user.click(screen.getByRole("button", { name: "Help for Detections and Signatures" }));
+  expect(screen.getByText("Include only validated detections.")).toBeVisible();
+  await user.keyboard("{Escape}");
   await user.click(screen.getByRole("button", { name: "Not applicable" }));
 
   expect(updateGuidedReportSectionDisposition).toHaveBeenCalledWith(
@@ -218,16 +228,27 @@ it("renders template fields and saves them as one revision", async () => {
 
   expect(screen.getByLabelText("Report title").tagName).toBe("TEXTAREA");
   expect(screen.getByLabelText("Report title")).toHaveAttribute("autocomplete", "off");
-  expect(screen.getByLabelText("Campaign name (required)").tagName).toBe("TEXTAREA");
-  expect(screen.getByLabelText("Campaign name (required)")).toHaveAttribute("autocomplete", "off");
+  expect(screen.queryByLabelText("Campaign name")).not.toBeInTheDocument();
+  expect(screen.getByText("No details added.")).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Edit details" }));
+  expect(screen.getByRole("dialog", { name: "Edit details" })).toBeVisible();
+  expect(screen.getByLabelText("Campaign name")).toHaveAttribute("autocomplete", "off");
   expect(screen.getByLabelText("Publication date").tagName).toBe("INPUT");
   expect(screen.getByLabelText("Publication date")).toHaveAttribute("type", "date");
   expect(screen.getByLabelText("Publication date")).toHaveAttribute("autocomplete", "off");
+  await user.type(screen.getByLabelText("Campaign name"), "Discarded value");
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByText("No details added.")).toBeVisible();
 
-  await user.type(screen.getByLabelText("Campaign name (required)"), "Operation Midnight Echo");
+  await user.click(screen.getByRole("button", { name: "Edit details" }));
+  expect(screen.getByLabelText("Campaign name")).toHaveValue("");
+  await user.type(screen.getByLabelText("Campaign name"), "Operation Midnight Echo");
+  await user.type(screen.getByLabelText("Publication date"), "2026-07-31");
+  await user.click(screen.getByRole("button", { name: "Save details" }));
+  expect(screen.getByText("Operation Midnight Echo")).toBeVisible();
   await user.clear(screen.getByLabelText("Report title"));
   await user.type(screen.getByLabelText("Report title"), "Midnight Echo Campaign Assessment");
-  await user.type(screen.getByLabelText("Publication date"), "2026-07-31");
   expect(screen.getByRole("button", { name: "Bold" })).toBeVisible();
   expect(screen.getByRole("button", { name: "Defang URLs" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Save report" }));
@@ -266,7 +287,116 @@ it("makes the complete narrative surface editable instead of leaving a one-line 
   );
 });
 
-it("shows exact validation messages for every required field type before publication", async () => {
+it.each([
+  ["Threat Actor Profile", "threat_actor_profile"],
+  ["Intrusion Analysis", "intrusion_analysis"],
+  ["Campaign Report", "campaign_report"],
+  ["Executive Report", "executive_report"],
+  ["Blank Guided Report", "blank_guided_report"],
+  ["Project custom report", null],
+] as const)("uses the shared prose-first editor for %s", (name, builtin) => {
+  render(
+    <GuidedReportEditor
+      projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+      report={report}
+      template={{ ...template, name, builtin }}
+      onBusyChange={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  );
+
+  expect(screen.getByLabelText("Analysis")).toHaveClass("guided-narrative-editor");
+  expect(screen.getByRole("button", { name: "Edit details" })).toBeVisible();
+  expect(screen.queryByText(/required before publishing/iu)).not.toBeInTheDocument();
+});
+
+it("keeps unused secondary fields behind one section-level add menu", async () => {
+  const user = userEvent.setup();
+  const focusedTemplate: ReportTemplateDefinition = {
+    ...template,
+    sections: [
+      {
+        key: "assessment",
+        title: "Assessment",
+        optional: false,
+        fields: [
+          {
+            key: "assessment",
+            label: "Assessment",
+            help_text: null,
+            kind: "narrative",
+            required: true,
+            columns: [],
+          },
+          {
+            key: "financial_relationships",
+            label: "Financial relationships",
+            help_text: null,
+            kind: "narrative",
+            required: false,
+            columns: [],
+          },
+          {
+            key: "structured_findings",
+            label: "Structured findings",
+            help_text: null,
+            kind: "repeatable_rows",
+            required: false,
+            columns: ["Finding", "Evidence"],
+          },
+          {
+            key: "supporting_intelligence",
+            label: "Supporting intelligence",
+            help_text: null,
+            kind: "project_references",
+            required: false,
+            columns: [],
+          },
+        ],
+      },
+    ],
+  };
+  const focusedReport: GuidedReport = {
+    ...report,
+    template_id: focusedTemplate.id,
+    included_sections: ["assessment"],
+    fields: {
+      assessment: { type: "narrative", value: { type: "doc", content: [] } },
+      financial_relationships: { type: "narrative", value: { type: "doc", content: [] } },
+      structured_findings: { type: "rows", value: [] },
+      supporting_intelligence: { type: "project_references", value: [] },
+    },
+  };
+
+  render(
+    <GuidedReportEditor
+      projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+      report={focusedReport}
+      template={focusedTemplate}
+      onBusyChange={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  );
+
+  expect(document.querySelector('[contenteditable="true"][aria-label="Assessment"]')).toBeVisible();
+  expect(screen.queryByLabelText("Financial relationships")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add finding" })).not.toBeInTheDocument();
+  expect(screen.queryByText("No project references added.")).not.toBeInTheDocument();
+
+  screen.getByRole("button", { name: "Add content to Assessment" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Financial relationships" }));
+  expect(screen.getByLabelText("Financial relationships")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Dismiss Financial relationships" }));
+  expect(screen.queryByLabelText("Financial relationships")).not.toBeInTheDocument();
+
+  screen.getByRole("button", { name: "Add content to Assessment" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Structured findings table" }));
+  expect(screen.getByRole("button", { name: "Add finding" })).toBeVisible();
+});
+
+it("confirms advisory readiness warnings without blocking publication", async () => {
   const user = userEvent.setup();
   const validationTemplate: ReportTemplateDefinition = {
     ...template,
@@ -341,6 +471,18 @@ it("shows exact validation messages for every required field type before publica
       required_references: { type: "project_references", value: [] },
     },
   };
+  vi.mocked(getGuidedReportReadiness).mockResolvedValue([
+    {
+      section_key: "validation",
+      field_key: "required_text",
+      message: "Add recommended content to Report name.",
+    },
+    {
+      section_key: "validation",
+      field_key: "required_narrative",
+      message: "Add recommended content to Executive summary.",
+    },
+  ]);
 
   render(
     <GuidedReportEditor
@@ -355,19 +497,55 @@ it("shows exact validation messages for every required field type before publica
 
   await user.click(screen.getByRole("button", { name: "Publish report" }));
 
-  expect(screen.getByText("Enter Report name.")).toBeVisible();
-  expect(screen.getByText("Choose Report date.")).toBeVisible();
-  expect(screen.getByText("Choose Assessment confidence.")).toBeVisible();
-  expect(screen.getByText("Add content to Executive summary.")).toBeVisible();
-  expect(screen.getByText("Add at least one row to Infrastructure.")).toBeVisible();
-  expect(
-    screen.getByText("Add at least one project reference to Supporting intelligence."),
-  ).toBeVisible();
-  expect(screen.queryByText("Complete the highlighted fields before publishing.")).toBeNull();
-  expect(noticeSpies.add).toHaveBeenCalledWith(
-    expect.objectContaining({ title: "Report not ready to publish" }),
+  expect(getGuidedReportReadiness).toHaveBeenCalledWith(
+    "019b0dc2-34c8-7c31-a2e5-c447222ce0b9",
+    validationReport.id,
   );
+  expect(screen.getByRole("dialog", { name: "Recommended content is missing" })).toBeVisible();
+  expect(screen.getByText("Add recommended content to Report name.")).toBeVisible();
+  expect(screen.queryByText(/required before publishing/iu)).not.toBeInTheDocument();
   expect(screen.queryByRole("dialog", { name: "Publish document" })).not.toBeInTheDocument();
+
+  const warningDialog = screen.getByRole("dialog", { name: "Recommended content is missing" });
+  await user.click(screen.getByRole("button", { name: "Return to report" }));
+  await waitForElementToBeRemoved(warningDialog);
+
+  await user.click(screen.getByRole("button", { name: "Publish report" }));
+  await user.click(await screen.findByRole("button", { name: "Continue to Publish" }));
+  expect(screen.getByRole("dialog", { name: "Publish report" })).toBeVisible();
+});
+
+it("toasts a hard error and focuses its details control", async () => {
+  const user = userEvent.setup();
+  const invalidReport: GuidedReport = {
+    ...report,
+    fields: {
+      ...report.fields,
+      publication_date: { type: "text", value: "2026-02-30" },
+    },
+  };
+
+  render(
+    <GuidedReportEditor
+      projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+      report={invalidReport}
+      template={template}
+      onBusyChange={vi.fn()}
+      onPublish={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  );
+
+  await user.click(screen.getByRole("button", { name: "Publish report" }));
+
+  expect(noticeSpies.add).toHaveBeenCalledWith({
+    title: "Report not published",
+    description: "Choose a valid date for Publication date.",
+    type: "info",
+  });
+  const date = await screen.findByLabelText("Publication date");
+  expect(date).toHaveFocus();
+  expect(getGuidedReportReadiness).not.toHaveBeenCalled();
 });
 
 it("keeps empty sections in the editor but removes them from publication choices", async () => {
@@ -465,7 +643,13 @@ it("keeps empty sections in the editor but removes them from publication choices
     />,
   );
 
+  const navigation = screen.getByRole("navigation", { name: "Report sections" });
+  const emptyNotes = within(navigation).getByRole("button", { name: /Empty notes/u });
+  const blankInventory = within(navigation).getByRole("button", { name: /Blank inventory/u });
+  expect(screen.getByRole("heading", { name: "Overview" })).toBeVisible();
+  await user.click(emptyNotes);
   expect(screen.getByRole("heading", { name: "Empty notes" })).toBeVisible();
+  await user.click(blankInventory);
   expect(screen.getByRole("heading", { name: "Blank inventory" })).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "Publish report" }));
@@ -476,7 +660,7 @@ it("keeps empty sections in the editor but removes them from publication choices
   expect(within(choices).queryByText("Blank inventory")).not.toBeInTheDocument();
 });
 
-it("keeps every report on one page with bounded section navigation and visible status", async () => {
+it("shows one selected section at a time with status visible in bounded navigation", async () => {
   const user = userEvent.setup();
   const metadataSection = template.sections[0];
   if (!metadataSection) throw new Error("Campaign metadata test section is missing");
@@ -507,11 +691,12 @@ it("keeps every report on one page with bounded section navigation and visible s
     included_sections: ["campaign_metadata", "evidence"],
     fields: {
       ...report.fields,
+      publication_date: { type: "text", value: "2026-08-02" },
       evidence_notes: { type: "narrative", value: { type: "doc", content: [] } },
     },
   };
 
-  const view = render(
+  render(
     <div className="canvas">
       <GuidedReportEditor
         projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
@@ -524,53 +709,22 @@ it("keeps every report on one page with bounded section navigation and visible s
   );
 
   const navigation = screen.getByRole("navigation", { name: "Report sections" });
-  const metadataLink = within(navigation).getByRole("link", { name: /Campaign metadata/u });
-  expect(metadataLink).toHaveAttribute("href", "#report-section-campaign_metadata");
-  expect(within(navigation).getByText("1 required")).toBeVisible();
-  expect(within(navigation).getByRole("link", { name: /Evidence/u })).toHaveAttribute(
-    "href",
-    "#report-section-evidence",
-  );
-  expect(within(navigation).getByText("Optional")).toBeVisible();
-  expect(screen.getByText("Required before publishing")).toBeVisible();
+  const metadataButton = within(navigation).getByRole("button", { name: /Campaign metadata/u });
+  expect(metadataButton).toHaveAttribute("aria-current", "page");
+  expect(within(metadataButton).getByText("In progress")).toBeVisible();
+  const evidenceButton = within(navigation).getByRole("button", { name: /Evidence/u });
+  expect(evidenceButton).not.toHaveAttribute("aria-current");
+  expect(within(evidenceButton).getByText("Empty")).toBeVisible();
+  expect(screen.queryByText(/required before publishing/iu)).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Campaign metadata" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Evidence" })).not.toBeInTheDocument();
 
-  const metadataHeading = screen.getByRole("heading", { name: "Campaign metadata" });
-  const metadataTargetSection = metadataHeading.closest("section");
-  if (!metadataTargetSection) throw new Error("Campaign metadata section is missing");
-  const canvas = view.container.querySelector<HTMLElement>(".canvas");
-  if (!canvas) throw new Error("Report canvas is missing");
-  const scrollTo = vi.fn();
-  Object.defineProperty(canvas, "scrollTop", { configurable: true, value: 120 });
-  Object.defineProperty(canvas, "scrollTo", { configurable: true, value: scrollTo });
-  vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
-    top: 20,
-    left: 0,
-    right: 800,
-    bottom: 620,
-    width: 800,
-    height: 600,
-    x: 0,
-    y: 20,
-    toJSON: () => ({}),
-  });
-  vi.spyOn(metadataTargetSection, "getBoundingClientRect").mockReturnValue({
-    top: 260,
-    left: 0,
-    right: 800,
-    bottom: 460,
-    width: 800,
-    height: 200,
-    x: 0,
-    y: 260,
-    toJSON: () => ({}),
-  });
-  const scrollIntoView = vi.spyOn(Element.prototype, "scrollIntoView");
-  window.history.replaceState(null, "", "/");
-  await user.click(metadataLink);
+  await user.click(evidenceButton);
 
-  expect(scrollTo).toHaveBeenCalledWith({ behavior: "smooth", top: 360 });
-  expect(scrollIntoView).not.toHaveBeenCalled();
-  expect(window.location.hash).toBe("");
+  expect(evidenceButton).toHaveAttribute("aria-current", "page");
+  expect(metadataButton).not.toHaveAttribute("aria-current");
+  expect(screen.getByRole("heading", { name: "Evidence" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Campaign metadata" })).not.toBeInTheDocument();
 });
 
 it("offers contextual controls and project data only for compatible structured columns", async () => {
@@ -597,6 +751,7 @@ it("offers contextual controls and project data only for compatible structured c
               "Status",
               "Linked identity",
               "Confidence",
+              "Evidence references",
             ],
           },
         ],
@@ -624,7 +779,10 @@ it("offers contextual controls and project data only for compatible structured c
   expect(
     screen.queryByRole("button", { name: /Insert project data as new Sites row/u }),
   ).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Add row" }));
+  screen.getByRole("button", { name: "Add content to Site inventory" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Sites table" }));
+  await user.click(screen.getByRole("button", { name: "Add site" }));
 
   expect(
     screen.getByRole("button", { name: "Choose project data for Sites row 1 Domain or site" }),
@@ -635,12 +793,63 @@ it("offers contextual controls and project data only for compatible structured c
   expect(
     screen.queryByRole("button", { name: "Choose project data for Sites row 1 Category" }),
   ).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Choose project data for Sites row 1 Evidence references" }),
+  ).toBeVisible();
   expect(screen.getByLabelText("Sites row 1 First seen")).toHaveAttribute("type", "date");
   expect(screen.getByRole("combobox", { name: "Sites row 1 Status" })).toBeVisible();
   expect(screen.getByRole("combobox", { name: "Sites row 1 Confidence" })).toBeVisible();
   expect(
     screen.queryByRole("button", { name: "Insert project data into Campaign name" }),
   ).toBeNull();
+
+  await user.type(screen.getByLabelText("Sites row 1 Domain or site"), "discarded.example");
+  const addDialog = screen.getByRole("dialog", { name: "Add site" });
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitForElementToBeRemoved(addDialog);
+  expect(screen.getByText(/No sites added/u)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Add site" })).toHaveFocus();
+
+  await user.click(screen.getByRole("button", { name: "Add site" }));
+  await user.type(screen.getByLabelText("Sites row 1 Domain or site"), "kept.example");
+  vi.mocked(listReportProjectData).mockResolvedValue([
+    {
+      kind: "evidence",
+      id: "21a6b93a-06ac-4f91-b0a3-46b58af592d1",
+      label: "Captured storefront",
+      objectType: "image/png",
+      summary: "Landing page capture",
+      values: { label: "Captured storefront" },
+    },
+  ]);
+  await user.click(
+    screen.getByRole("button", { name: "Choose project data for Sites row 1 Evidence references" }),
+  );
+  await user.click(await screen.findByRole("button", { name: "Captured storefront — image/png" }));
+  expect(screen.getByText("Linked to Captured storefront")).toBeVisible();
+  const savedDialog = screen.getByRole("dialog", { name: "Add site" });
+  await user.click(screen.getByRole("button", { name: "Save record" }));
+  await waitForElementToBeRemoved(savedDialog);
+  expect(screen.getByText("kept.example")).toBeVisible();
+  expect(screen.getByText(/1 linked project reference/u)).toBeVisible();
+
+  expect(screen.getByRole("heading", { name: "kept.example" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Edit site kept.example" }));
+  await user.clear(screen.getByLabelText("Sites row 1 Domain or site"));
+  await user.type(screen.getByLabelText("Sites row 1 Domain or site"), "discarded-edit.example");
+  const editDialog = screen.getByRole("dialog", { name: "Edit site" });
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitForElementToBeRemoved(editDialog);
+  expect(screen.getByText("kept.example")).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "Remove site kept.example" }));
+  expect(screen.getByRole("alertdialog", { name: "Remove site?" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.getByRole("heading", { name: "kept.example" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Remove site kept.example" }));
+  await user.click(screen.getByRole("button", { name: "Remove site" }));
+  expect(screen.getByText(/No sites added/u)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Add site" })).toHaveFocus();
 });
 
 it("makes incident timeline rows fill their container with readable controls", async () => {
@@ -683,7 +892,10 @@ it("makes incident timeline rows fill their container with readable controls", a
     />,
   );
 
-  await user.click(screen.getByRole("button", { name: "Add row" }));
+  screen.getByRole("button", { name: "Add content to Incident metadata" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(await screen.findByRole("menuitem", { name: "Incident timeline table" }));
+  await user.click(screen.getByRole("button", { name: "Add event" }));
 
   expect(screen.getByLabelText("Incident timeline row 1 Time")).toHaveClass(
     "guided-report-table-input",
@@ -699,9 +911,12 @@ it("makes incident timeline rows fill their container with readable controls", a
       name: "Choose project data for Incident timeline row 1 Evidence",
     }),
   ).toHaveTextContent("Choose evidence");
-  expect(screen.getByRole("button", { name: "Remove Incident timeline row 1" })).toHaveTextContent(
-    "Remove row",
-  );
+  await user.type(screen.getByLabelText("Incident timeline row 1 Event"), "Confirmed event");
+  const recordDialog = screen.getByRole("dialog", { name: "Add event" });
+  await user.click(screen.getByRole("button", { name: "Save record" }));
+  await waitForElementToBeRemoved(recordDialog);
+  expect(screen.getByText("Confirmed event")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Remove event Confirmed event" })).toBeVisible();
 });
 
 it("renders the shared data-sources table with source-aware controls", async () => {
@@ -743,7 +958,12 @@ it("renders the shared data-sources table with source-aware controls", async () 
     />,
   );
 
-  await user.click(screen.getByRole("button", { name: "Add row" }));
+  screen.getByRole("button", { name: "Add content to Data sources" }).focus();
+  await user.keyboard("{Enter}");
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Data sources and citations table" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Add source" }));
 
   expect(screen.getByLabelText("Data sources and citations row 1 Source").tagName).toBe("TEXTAREA");
   expect(screen.getByLabelText("Data sources and citations row 1 Reference").tagName).toBe(
@@ -761,11 +981,11 @@ it("renders the shared data-sources table with source-aware controls", async () 
       name: "Choose project data for Data sources and citations row 1 Source",
     }),
   ).toHaveTextContent("Choose source");
-  expect(screen.getByRole("group", { name: "Data source 1" })).toHaveAttribute(
-    "data-layout",
-    "source-citation",
-  );
-  expect(screen.getByText("Data source 1")).toBeVisible();
+  await user.type(screen.getByLabelText("Data sources and citations row 1 Source"), "Source A");
+  const sourceDialog = screen.getByRole("dialog", { name: "Add source" });
+  await user.click(screen.getByRole("button", { name: "Save record" }));
+  await waitForElementToBeRemoved(sourceDialog);
+  expect(screen.getByText("Source A")).toBeVisible();
 });
 
 it("inserts a labeled evidence link into a guided narrative", async () => {

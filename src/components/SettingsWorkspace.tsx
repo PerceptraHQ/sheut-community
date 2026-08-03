@@ -7,6 +7,7 @@ import { ToggleGroup } from "@base-ui/react/toggle-group";
 import { useState } from "react";
 import thirdPartyNotices from "../../THIRD_PARTY_NOTICES.md?raw";
 import type { ReportHelpTopicId } from "../lib/reportHelp";
+import type { TelemetryConsent } from "../lib/telemetry";
 import {
   DEFAULT_WORKBENCH_LAYOUT,
   saveWorkbenchLayout,
@@ -23,8 +24,10 @@ interface SettingsWorkspaceProps {
   initialSection?: SettingsSectionId;
   layout: WorkbenchLayoutPreferences;
   onLayoutChange: (layout: WorkbenchLayoutPreferences) => void;
+  onTelemetryPreferenceChange?: (enabled: boolean) => Promise<void>;
   projectId?: string;
   projectName?: string;
+  telemetryConsent?: TelemetryConsent;
 }
 
 const settingsTabClass =
@@ -35,10 +38,14 @@ export function SettingsWorkspace({
   initialSection = "appearance",
   layout,
   onLayoutChange,
+  onTelemetryPreferenceChange = () => Promise.resolve(),
   projectId,
   projectName,
+  telemetryConsent = "disabled",
 }: SettingsWorkspaceProps) {
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(initialSection);
+  const [telemetryBusy, setTelemetryBusy] = useState(false);
+  const [telemetryError, setTelemetryError] = useState(false);
 
   const patchLayout = (patch: Partial<WorkbenchLayoutPreferences>) => {
     const next = { ...layout, ...patch };
@@ -50,6 +57,18 @@ export function SettingsWorkspace({
     const next = { ...DEFAULT_WORKBENCH_LAYOUT };
     saveWorkbenchLayout(next);
     onLayoutChange(next);
+  };
+
+  const changeTelemetryPreference = async (enabled: boolean) => {
+    setTelemetryBusy(true);
+    setTelemetryError(false);
+    try {
+      await onTelemetryPreferenceChange(enabled);
+    } catch {
+      setTelemetryError(true);
+    } finally {
+      setTelemetryBusy(false);
+    }
   };
 
   return (
@@ -154,7 +173,7 @@ export function SettingsWorkspace({
             />
             <InformationCard
               title="Offline by default"
-              description="There is no account, telemetry, or project-data network traffic during ordinary Community use."
+              description="There is no account or project-data network traffic. Anonymous diagnostics and usage events are sent only after explicit opt-in."
             />
             <InformationCard
               title="Recovery belongs to Community"
@@ -165,6 +184,35 @@ export function SettingsWorkspace({
               description="Visual links remain visual until an analyst explicitly validates a separate STIX relationship draft."
             />
           </div>
+          <SettingsSection title="Telemetry controls">
+            <SettingSwitch
+              checked={telemetryConsent === "enabled"}
+              label="Anonymous diagnostics and usage"
+              description="Send fixed event names for coarse feature use and unexpected application failures."
+              disabled={telemetryBusy}
+              onCheckedChange={(enabled) => void changeTelemetryPreference(enabled)}
+            />
+          </SettingsSection>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <InformationCard
+              title="Collected after opt-in"
+              description="Application version, operating-system family, CPU architecture, random installation identifier, event time, and one fixed allowlisted event name."
+            />
+            <InformationCard
+              title="Never collected"
+              description="Project identifiers or content; graph data; report titles, sections, fields, rows, or prose; STIX objects; evidence metadata or files; notes; attachments; searches; paths; URLs; error messages; credentials; or identity."
+            />
+          </div>
+          <p className="mt-3 mb-0 text-copy-faint text-[11px] leading-5">
+            {telemetryConsent === "enabled"
+              ? "Telemetry is enabled. Turning it off removes the local installation identifier and stops future reports."
+              : "Telemetry is off. Sheut sends no diagnostic network requests and keeps no telemetry installation identifier."}
+          </p>
+          {telemetryError ? (
+            <p className="error-message mt-3" role="alert">
+              Sheut could not save the telemetry setting. The previous setting remains active.
+            </p>
+          ) : null}
           <p className="mt-5 mb-0 text-copy-faint text-xs leading-5">
             Managed connectors, collaboration, SSO, organization policy, centralized key management,
             and managed backups belong to Enterprise.
@@ -271,11 +319,13 @@ function SettingsSection({ title, children }: { title: string; children: React.R
 
 function SettingSwitch({
   checked,
+  disabled = false,
   label,
   description,
   onCheckedChange,
 }: {
   checked: boolean;
+  disabled?: boolean;
   label: string;
   description: string;
   onCheckedChange: (checked: boolean) => void;
@@ -300,6 +350,7 @@ function SettingSwitch({
         nativeButton
         render={<button type="button" />}
         checked={checked}
+        disabled={disabled}
         className="flex h-5 w-9 shrink-0 rounded-full border border-panel-border bg-panel-deep p-0.5 transition-colors data-checked:border-accent data-checked:bg-accent"
         onCheckedChange={onCheckedChange}
         aria-describedby={descriptionId}

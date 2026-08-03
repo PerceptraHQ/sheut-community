@@ -30,6 +30,27 @@
     "catalog_reference",
   ]);
   const reportSectionDispositions = new Set(["active", "not_applicable"]);
+  const telemetryEventNames = new Set([
+    "application_started",
+    "project_created",
+    "project_unlocked",
+    "backup_created",
+    "recovery_point_restored",
+    "investigations_opened",
+    "intelligence_opened",
+    "evidence_opened",
+    "graph_opened",
+    "mitre_opened",
+    "settings_opened",
+    "stix_import_completed",
+    "stix_export_completed",
+    "evidence_import_completed",
+    "publication_completed",
+    "project_list_failed",
+    "webview_unhandled_error",
+    "webview_unhandled_rejection",
+    "workspace_render_failed",
+  ]);
   const tlpMarkings = new Set(["clear", "green", "amber", "amber_strict", "red"]);
   const windowActions = new Set([
     "plugin:window|close",
@@ -330,6 +351,15 @@
     isPassphrase(payload.passphrase);
 
   const validators = Object.freeze({
+    get_telemetry_preference: (payload) => isRecord(payload) && Object.keys(payload).length === 0,
+    set_telemetry_preference: (payload) =>
+      isRecord(payload) &&
+      Object.keys(payload).length === 1 &&
+      typeof payload.enabled === "boolean",
+    record_telemetry_event: (payload) =>
+      isRecord(payload) &&
+      Object.keys(payload).length === 1 &&
+      telemetryEventNames.has(payload.eventName),
     list_projects: (payload) => isRecord(payload) && Object.keys(payload).length === 0,
     list_graph_workspaces: (payload) =>
       ids(payload, "projectId") && typeof payload.includeDeleted === "boolean",
@@ -504,6 +534,7 @@
       payload.expectedRevision >= 1 &&
       isReportTitle(payload.title) &&
       isGuidedReportFields(payload.fields),
+    get_guided_report_readiness: (payload) => ids(payload, "projectId", "reportId"),
     update_guided_report_section_disposition: (payload) =>
       ids(payload, "projectId", "reportId") &&
       Number.isSafeInteger(payload.expectedRevision) &&

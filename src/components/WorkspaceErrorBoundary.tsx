@@ -4,6 +4,7 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 interface WorkspaceErrorBoundaryProps {
   children: ReactNode;
   onLeave: () => void;
+  onReport?: (code: "workspace_render_failed") => void;
 }
 
 interface WorkspaceErrorBoundaryState {
@@ -67,6 +68,7 @@ export class WorkspaceErrorBoundary extends Component<
   }
 
   componentDidCatch(_error: unknown, info: ErrorInfo) {
+    this.props.onReport?.("workspace_render_failed");
     const componentStack = sanitizeComponentStack(info.componentStack);
     if (componentStack && componentStack !== this.state.componentStack) {
       this.setState({ componentStack });

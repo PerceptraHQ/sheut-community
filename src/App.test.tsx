@@ -6,6 +6,7 @@ import "./components/InvestigationsWorkspace";
 import * as documentsApi from "./lib/documents";
 import * as guidedReportsApi from "./lib/guided-reports";
 import * as projectsApi from "./lib/projects";
+import * as telemetryApi from "./lib/telemetry";
 
 vi.mock("./lib/documents", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/documents")>();
@@ -54,6 +55,16 @@ vi.mock("./lib/guided-reports", async (importOriginal) => {
   };
 });
 
+vi.mock("./lib/telemetry", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./lib/telemetry")>();
+  return {
+    ...actual,
+    getTelemetryPreference: vi.fn(),
+    recordTelemetryEvent: vi.fn(),
+    setTelemetryPreference: vi.fn(),
+  };
+});
+
 const PROJECT_ID = "019b0dc2-34c8-7c31-a2e5-c447222ce0b9";
 const CAMPAIGN_TEMPLATE_ID = "4c8680ad-3f8c-53df-b94d-405cb3dc231f";
 const campaignTemplate: guidedReportsApi.ReportTemplateDefinition = {
@@ -96,6 +107,30 @@ describe("App", () => {
     vi.mocked(guidedReportsApi.listReportTemplates)
       .mockReset()
       .mockResolvedValue([campaignTemplate]);
+    vi.mocked(telemetryApi.getTelemetryPreference)
+      .mockReset()
+      .mockResolvedValue({ consent: "disabled" });
+    vi.mocked(telemetryApi.recordTelemetryEvent).mockReset().mockResolvedValue(false);
+    vi.mocked(telemetryApi.setTelemetryPreference).mockReset();
+  });
+
+  it("asks for telemetry consent once and keeps collection off by default", async () => {
+    const user = userEvent.setup();
+    vi.mocked(telemetryApi.getTelemetryPreference).mockResolvedValue({ consent: "unknown" });
+    vi.mocked(telemetryApi.setTelemetryPreference).mockResolvedValue({ consent: "disabled" });
+
+    render(<App />);
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Anonymous diagnostics and usage",
+    });
+    expect(within(dialog).getByText(/graph nodes, edges, labels, or properties/i)).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Keep telemetry off" }));
+
+    await waitFor(() => expect(telemetryApi.setTelemetryPreference).toHaveBeenCalledWith(false));
+    expect(
+      screen.queryByRole("dialog", { name: "Anonymous diagnostics and usage" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders a compact desktop workbench while locked", async () => {
@@ -103,7 +138,10 @@ describe("App", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Open project" })).toBeVisible();
     expect(screen.getByRole("img", { name: "Sheut" })).toBeVisible();
-    expect(within(screen.getByRole("banner")).queryByRole("img", { name: "Sheut" })).toBeNull();
+    const titleBar = document.querySelector<HTMLElement>(".window-title-bar");
+    expect(titleBar).not.toBeNull();
+    if (!titleBar) return;
+    expect(within(titleBar).queryByRole("img", { name: "Sheut" })).toBeNull();
     expect(screen.getByRole("navigation", { name: "Activity rail" })).toBeVisible();
     expect(screen.getByRole("complementary", { name: "Project explorer" })).toBeVisible();
     expect(screen.getByRole("complementary", { name: "Inspector" })).toBeVisible();
@@ -113,6 +151,60 @@ describe("App", () => {
     expect(screen.queryByText("Encrypted at rest")).not.toBeInTheDocument();
     expect(screen.queryByText("Local encrypted storage")).not.toBeInTheDocument();
     expect(screen.queryByText("STIX 2.1")).not.toBeInTheDocument();
+  });
+
+  it("shows an explicit locked status for discovered projects", async () => {
+    vi.mocked(projectsApi.listProjects).mockResolvedValue([
+      {
+        id: PROJECT_ID,
+        name: "Idle project",
+        locked: true,
+        unlockMethod: "device",
+        defaultTlpMarking: "amber",
+      },
+    ]);
+
+    render(<App />);
+
+    expect(await screen.findByText("Idle project")).toBeVisible();
+    expect(screen.getByText("Locked")).toBeVisible();
+  });
+
+  it("closes an open workspace when project reconciliation finds it locked", async () => {
+    const user = userEvent.setup();
+    vi.mocked(projectsApi.createProject).mockResolvedValue({
+      id: PROJECT_ID,
+      name: "Idle project",
+      locked: false,
+      unlockMethod: "device",
+      defaultTlpMarking: "amber",
+    });
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Create project" }));
+    const dialog = screen.getByRole("dialog", { name: "Create project" });
+    await user.type(within(dialog).getByLabelText("Project name"), "Idle project");
+    await user.click(within(dialog).getByRole("button", { name: "Create project" }));
+    await user.click(await screen.findByRole("button", { name: "Documents" }));
+    expect(await screen.findByRole("heading", { name: "Documents" })).toBeVisible();
+
+    vi.mocked(projectsApi.listProjects).mockResolvedValue([
+      {
+        id: PROJECT_ID,
+        name: "Idle project",
+        locked: true,
+        unlockMethod: "device",
+        defaultTlpMarking: "amber",
+      },
+    ]);
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Open project" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Documents" })).not.toBeInTheDocument();
+    expect(screen.getByText("Locked")).toBeVisible();
+    expect(
+      await screen.findByRole("dialog", { name: "Project locked after inactivity" }),
+    ).toBeVisible();
   });
 
   it("keeps app-level navigation separate from project content", async () => {

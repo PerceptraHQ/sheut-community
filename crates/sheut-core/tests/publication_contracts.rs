@@ -3,9 +3,9 @@ use sheut_core::{
     ContentDensity, CoverTreatment, EvidenceFileMetadata, EvidenceMetadataInput, GuidedReport,
     GuidedReportFieldValue, LocalId, PageFurniture, PageOrientation, PaperSize, ProjectMetadata,
     PublicationFormat, PublicationRecord, PublicationReleaseEntry, PublicationSettings,
-    PublicationSnapshot, PublicationSource, PublicationStatus, ReportFieldKind,
-    ReportSectionDisposition, Revision, SectionTreatment, TableTreatment, TlpMarking,
-    built_in_report_templates, report_template_catalog, report_template_revision,
+    PublicationSnapshot, PublicationSource, PublicationStatus, ReportSectionDisposition, Revision,
+    SectionTreatment, TableTreatment, TlpMarking, built_in_report_templates,
+    report_template_catalog, report_template_revision,
 };
 
 fn id(value: &str) -> LocalId {
@@ -13,13 +13,13 @@ fn id(value: &str) -> LocalId {
 }
 
 #[test]
-fn illicit_ecosystem_catalog_exposes_revision_three_guidance_and_preserves_old_revisions() {
+fn illicit_ecosystem_catalog_exposes_revision_four_guidance_and_preserves_old_revisions() {
     let template = report_template_catalog()
         .into_iter()
         .find(|template| template.name() == "Illicit Ecosystem Report")
         .unwrap();
     assert_eq!(template.builtin(), None);
-    assert_eq!(template.revision(), Revision::new(3).unwrap());
+    assert_eq!(template.revision(), Revision::new(4).unwrap());
     let sections = template
         .sections()
         .iter()
@@ -76,15 +76,24 @@ fn illicit_ecosystem_catalog_exposes_revision_three_guidance_and_preserves_old_r
         .unwrap();
     assert_eq!(report_number.label(), "Report ID");
     assert!(report_number.required());
-    let status = administration
+    let authors = administration
         .fields()
         .iter()
-        .find(|field| field.key() == "report_status")
+        .find(|field| field.key() == "authors")
         .unwrap();
-    assert_eq!(status.kind(), ReportFieldKind::Choice);
-    assert_eq!(
-        status.options(),
-        ["Draft", "For review", "Final", "Superseded"]
+    assert_eq!(authors.label(), "Authors");
+    let producing_organisation = administration
+        .fields()
+        .iter()
+        .find(|field| field.key() == "producing_organization")
+        .unwrap();
+    assert_eq!(producing_organisation.label(), "Producing organisation");
+    assert!(
+        administration
+            .fields()
+            .iter()
+            .all(|field| field.key() != "report_status"),
+        "publication status belongs to the publication snapshot"
     );
 
     let scope = template
@@ -105,7 +114,10 @@ fn illicit_ecosystem_catalog_exposes_revision_three_guidance_and_preserves_old_r
 
     let revision_one = report_template_revision(template.id(), Revision::new(1).unwrap()).unwrap();
     let revision_two = report_template_revision(template.id(), Revision::new(2).unwrap()).unwrap();
+    let revision_three =
+        report_template_revision(template.id(), Revision::new(3).unwrap()).unwrap();
     assert_eq!(revision_two.revision(), Revision::new(2).unwrap());
+    assert_eq!(revision_three.revision(), Revision::new(3).unwrap());
     let revision_one_sections = revision_one
         .sections()
         .iter()
@@ -183,7 +195,7 @@ fn illicit_ecosystem_upgrade_is_explicit_revisioned_and_preserves_source_content
     let template_id = id("6fba43e4-fcac-5b12-b37a-17aa0d4e99ca");
     let old_template = report_template_revision(template_id, Revision::new(1).unwrap()).unwrap();
     let current_template =
-        report_template_revision(template_id, Revision::new(3).unwrap()).unwrap();
+        report_template_revision(template_id, Revision::new(4).unwrap()).unwrap();
     let report = GuidedReport::new_blank(
         id("e7c44850-9f67-4d26-b7e3-0d4ee82339ef"),
         &old_template,
@@ -225,7 +237,7 @@ fn illicit_ecosystem_upgrade_is_explicit_revisioned_and_preserves_source_content
         .unwrap();
 
     assert_eq!(upgraded.revision(), Revision::new(3).unwrap());
-    assert_eq!(upgraded.template_revision(), Revision::new(3).unwrap());
+    assert_eq!(upgraded.template_revision(), Revision::new(4).unwrap());
     assert_eq!(
         upgraded.fields().get("report_number"),
         Some(&GuidedReportFieldValue::Text("IER-0042".to_owned()))
@@ -268,6 +280,79 @@ fn illicit_ecosystem_upgrade_is_explicit_revisioned_and_preserves_source_content
 }
 
 #[test]
+fn illicit_revision_three_upgrade_preserves_prose_dispositions_and_retired_metadata() {
+    let template_id = id("6fba43e4-fcac-5b12-b37a-17aa0d4e99ca");
+    let source_template = report_template_revision(template_id, Revision::new(3).unwrap()).unwrap();
+    let target_template = report_template_revision(template_id, Revision::new(4).unwrap()).unwrap();
+    let prose = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "paragraph",
+            "content": [{"type": "text", "text": "Analyst-authored prose remains byte-for-byte structured JSON."}]
+        }]
+    });
+    let report = GuidedReport::new_blank(
+        id("e7c44850-9f67-4d26-b7e3-0d4ee82339ef"),
+        &source_template,
+        1_000,
+    )
+    .unwrap()
+    .revise_fields(
+        &source_template,
+        Revision::new(1).unwrap(),
+        "Example Illicit Ecosystem",
+        BTreeMap::from([
+            (
+                "overall_assessment".to_owned(),
+                GuidedReportFieldValue::Narrative(prose.clone()),
+            ),
+            (
+                "report_status".to_owned(),
+                GuidedReportFieldValue::Text("Final".to_owned()),
+            ),
+        ]),
+        2_000,
+    )
+    .unwrap()
+    .revise_section_disposition(
+        &source_template,
+        Revision::new(2).unwrap(),
+        "attack_mappings",
+        ReportSectionDisposition::NotApplicable,
+        3_000,
+    )
+    .unwrap();
+
+    let upgraded = report
+        .upgrade_illicit_ecosystem_template(
+            &source_template,
+            &target_template,
+            None,
+            Revision::new(3).unwrap(),
+            4_000,
+        )
+        .unwrap();
+
+    assert_eq!(upgraded.template_revision(), Revision::new(4).unwrap());
+    assert_eq!(
+        upgraded.fields().get("overall_assessment"),
+        Some(&GuidedReportFieldValue::Narrative(prose))
+    );
+    assert_eq!(
+        upgraded.section_disposition("attack_mappings"),
+        ReportSectionDisposition::NotApplicable
+    );
+    assert!(matches!(
+        upgraded.fields().get("additional_metadata"),
+        Some(GuidedReportFieldValue::Rows(rows))
+            if rows.iter().any(|row| {
+                row.get("Label").is_some_and(|value| value == "Legacy report_status")
+                    && row.get("Value").is_some_and(|value| value == "Final")
+            })
+    ));
+}
+
+#[test]
 fn guided_report_section_dispositions_are_validated_and_not_applicable_is_not_incomplete() {
     let template = report_template_catalog()
         .into_iter()
@@ -293,7 +378,7 @@ fn guided_report_section_dispositions_are_validated_and_not_applicable_is_not_in
     );
     assert!(
         revised
-            .validate_for_publication(&template)
+            .readiness_warnings(&template)
             .iter()
             .all(|issue| issue.field_key() != "attack_mappings")
     );
@@ -487,7 +572,7 @@ fn built_in_templates_cover_the_guided_report_taxonomy() {
 }
 
 #[test]
-fn guided_reports_are_revisioned_drafts_and_validate_against_their_template() {
+fn guided_reports_are_revisioned_drafts_and_report_advisory_readiness() {
     let template = built_in_report_templates()
         .into_iter()
         .find(|template| template.builtin() == Some(BuiltinReportTemplate::CampaignReport))
@@ -497,7 +582,12 @@ fn guided_reports_are_revisioned_drafts_and_validate_against_their_template() {
             .unwrap();
 
     assert_eq!(report.revision(), Revision::new(1).unwrap());
-    assert!(!report.validate_for_publication(&template).is_empty());
+    let warnings = report.readiness_warnings(&template);
+    assert!(warnings.iter().any(|warning| {
+        warning.section_key() == "executive_summary"
+            && warning.field_key() == "executive_summary"
+            && warning.message() == "Add recommended content to Executive summary."
+    }));
 
     let report = report
         .revise_field(
@@ -595,6 +685,38 @@ fn guided_report_bulk_edits_are_single_revision_and_template_typed() {
             )
             .is_err()
     );
+}
+
+#[test]
+fn guided_report_rejects_malformed_supplied_dates_and_confidence_values() {
+    let template = built_in_report_templates()
+        .into_iter()
+        .find(|template| template.builtin() == Some(BuiltinReportTemplate::CampaignReport))
+        .unwrap();
+    let report =
+        GuidedReport::new_blank(id("e7c44850-9f67-4d26-b7e3-0d4ee82339ef"), &template, 1_000)
+            .unwrap();
+
+    for (field, value) in [
+        ("publication_date", "2026-02-30"),
+        ("confidence", "certain"),
+    ] {
+        assert!(
+            report
+                .revise_fields(
+                    &template,
+                    Revision::new(1).unwrap(),
+                    "Operation Midnight Echo",
+                    BTreeMap::from([(
+                        field.to_owned(),
+                        GuidedReportFieldValue::Text(value.to_owned()),
+                    )]),
+                    2_000,
+                )
+                .is_err(),
+            "{field} must reject {value}"
+        );
+    }
 }
 
 #[test]
