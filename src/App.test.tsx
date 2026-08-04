@@ -20,7 +20,6 @@ vi.mock("./lib/documents", async (importOriginal) => {
     restoreDocumentRevision: vi.fn(),
     listDocuments: vi.fn(),
     loadDocument: vi.fn(),
-    renderSavedDocument: vi.fn(),
     saveDocument: vi.fn(),
   };
 });
@@ -78,7 +77,6 @@ describe("App", () => {
     vi.mocked(documentsApi.restoreDocumentRevision).mockReset();
     vi.mocked(documentsApi.listDocuments).mockReset().mockResolvedValue([]);
     vi.mocked(documentsApi.loadDocument).mockReset();
-    vi.mocked(documentsApi.renderSavedDocument).mockReset();
     vi.mocked(documentsApi.saveDocument).mockReset();
     vi.mocked(telemetryApi.getTelemetryPreference)
       .mockReset()

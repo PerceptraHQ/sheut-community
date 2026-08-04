@@ -674,7 +674,6 @@ function validPayload(command) {
       expectedRevision: 1,
       root: { type: "doc", content: [] },
     },
-    render_saved_document: { projectId, documentId },
     unlock_project: { projectId },
     unlock_passphrase_project: { projectId, passphrase: "correct horse battery staple" },
     lock_project: { projectId },

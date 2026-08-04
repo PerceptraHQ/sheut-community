@@ -83,6 +83,30 @@ Typed Tauri commands cross into Rust, which owns validation, paths,
 transactions, migrations, persistence, recovery, import, export, and
 publication. Project data and every command argument are treated as untrusted.
 
+## Optional telemetry
+
+Anonymous diagnostics are off by default and remain off unless you explicitly
+opt in during first run or under **Settings → Data & security**. Ordinary use is
+fully local and does not require telemetry.
+
+After opt-in, Sheut sends only the application version, operating-system
+family, CPU architecture, event time, one fixed event name, a random event ID,
+and a random installation ID. Rust creates the installation ID as a UUID v4; it
+is unrelated to the device, user, project, encryption keys, or project data.
+The ID is stored only in application-local settings and is never exposed to the
+React frontend or displayed in the interface.
+
+Events are sent directly over HTTPS with no on-disk queue or retry. Event names
+are a closed allowlist for coarse actions such as opening the graph or completing
+a publication. The frontend cannot attach free-form fields.
+
+Sheut never sends project names or identifiers, report or note content, STIX
+objects, graph data, evidence, attachments, searches, paths, filenames, URLs,
+error messages, stack traces, credentials, passphrases, encryption material, or
+identity. Turning telemetry off immediately deletes the local installation ID
+and stops future telemetry requests; enabling it again creates a new unrelated
+ID.
+
 ## Community is the product
 
 This repository contains **Sheut Community** under MPL-2.0. Local encryption,

@@ -82,7 +82,6 @@ pub const COMMAND_NAMES: &[&str] = &[
     "create_project_backup",
     "load_document",
     "save_document",
-    "render_saved_document",
     "unlock_project",
     "unlock_passphrase_project",
     "lock_project",

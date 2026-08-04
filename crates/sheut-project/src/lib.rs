@@ -29,7 +29,7 @@ use sheut_core::{
     MAX_GRAPH_WORKSPACE_ITEMS, MitreTechniqueReference, Position, ProjectMetadata,
     PublicationRecord, ReportProperties, Revision, SemanticRelationshipDraft, TechniqueAssessment,
     TechniqueObservation, TechniqueOutcome, TlpMarking, VisualLink, WorkspaceItem,
-    WorkspaceItemKind, WorkspaceMode, detect_evidence_media_type, render_document,
+    WorkspaceItemKind, WorkspaceMode, detect_evidence_media_type, document_plain_text,
 };
 use sheut_mitre::{
     CatalogSnapshot, MAX_MAPPING_OBSERVATIONS, MitreCatalogError, MitreCatalogErrorCode,
@@ -2021,9 +2021,9 @@ impl<K: ProjectKeyStore> ProjectManager<K> {
         require_active_document(&session.store, document_id)?;
         let from = load_document_revision(&session.store, document_id, from_revision)?;
         let to = load_document_revision(&session.store, document_id, to_revision)?;
-        let before = render_document(&from);
-        let after = render_document(&to);
-        let (segments, simplified) = compare_document_text(before.plain_text(), after.plain_text());
+        let before = document_plain_text(&from);
+        let after = document_plain_text(&to);
+        let (segments, simplified) = compare_document_text(&before, &after);
         session.last_active_unix_ms = now_unix_ms;
         Ok(DocumentRevisionDiff::new(
             from_revision,

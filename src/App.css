@@ -1066,6 +1066,22 @@
 }
 
 .report-page-surface {
+  --tw-prose-body: #17202b;
+  --tw-prose-headings: #0b1320;
+  --tw-prose-lead: #17202b;
+  --tw-prose-links: #004b76;
+  --tw-prose-bold: #0b1320;
+  --tw-prose-counters: #334155;
+  --tw-prose-bullets: #334155;
+  --tw-prose-hr: #7a8490;
+  --tw-prose-quotes: #17202b;
+  --tw-prose-quote-borders: #7a8490;
+  --tw-prose-captions: #334155;
+  --tw-prose-code: #17202b;
+  --tw-prose-pre-code: #17202b;
+  --tw-prose-pre-bg: #f1f5f9;
+  --tw-prose-th-borders: #7a8490;
+  --tw-prose-td-borders: #7a8490;
   width: min(calc(100% - 3rem), 210mm);
   min-height: 297mm;
   margin-top: 1.5rem;
@@ -1620,6 +1636,10 @@
   color: #0b1320;
 }
 
+.report-page-surface .ProseMirror :is(strong, b) {
+  color: #0b1320;
+}
+
 .report-page-surface .ProseMirror p.is-editor-empty:first-child::before {
   color: #334155;
 }
@@ -1708,6 +1728,10 @@
   vertical-align: baseline;
 }
 
+.report-page-surface .editor-project-reference :is(span, strong) {
+  color: inherit;
+}
+
 .report-page-surface .editor-project-reference[data-display="block"] {
   display: flex;
   width: 100%;
@@ -1776,6 +1800,10 @@
   background: #e8edf1;
 }
 
+.report-page-surface .ProseMirror .editor-mitre-snapshot-header strong {
+  color: #0b1320;
+}
+
 .editor-mitre-grid {
   display: grid;
   grid-template-columns: minmax(6.5rem, 0.7fr) minmax(8rem, 1fr) minmax(12rem, 2fr);
@@ -1787,6 +1815,15 @@
   border-bottom: 1px solid #aeb8c2;
   padding: 0.4rem 0.5rem;
   overflow-wrap: anywhere;
+}
+
+.report-page-surface .editor-mitre-grid {
+  color: #17202b;
+  background: #fff;
+}
+
+.report-page-surface .ProseMirror .editor-mitre-grid > :is(strong, span) {
+  color: #17202b;
 }
 
 .editor-mitre-grid > :nth-child(3n) {
@@ -1820,6 +1857,11 @@
   padding: 0.4rem 0.55rem;
   background: #e8edf1;
   font-weight: 650;
+}
+
+.report-page-surface .ProseMirror .editor-graph-snapshot-header,
+.report-page-surface .ProseMirror .editor-graph-snapshot-header span {
+  color: #0b1320;
 }
 
 .editor-graph-snapshot img {
@@ -1858,6 +1900,11 @@
 
 .report-page-surface :is(.editor-image-attachment figcaption, .editor-image-status) {
   color: #334155;
+}
+
+.report-page-surface .editor-image-attachment {
+  border: 1px solid #7a8490;
+  background: #f6f8fa;
 }
 
 .vault-notice-viewport {

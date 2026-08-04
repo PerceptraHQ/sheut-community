@@ -11,6 +11,12 @@ import type { VaultPromiseNoticeOptions } from "./VaultNotices";
 const editorState = vi.hoisted(() => ({
   activeTable: false,
   alignment: "left",
+  outlineNodes: [] as Array<{
+    level: number;
+    position: number;
+    title: string;
+    type: "heading" | "paragraph";
+  }>,
   selectedText: "",
   selection: { from: 1, to: 1, empty: true },
 }));
@@ -109,6 +115,7 @@ vi.mock("@tiptap/react", async () => {
       editorCommandSpies.setTextSelection(position);
       return chain;
     },
+    scrollIntoView: () => chain,
     extendMarkRange: () => chain,
     setLink: () => chain,
     unsetLink: () => {
@@ -139,7 +146,26 @@ vi.mock("@tiptap/react", async () => {
       get selection() {
         return editorState.selection;
       },
-      doc: { textBetween: () => editorState.selectedText },
+      doc: {
+        descendants: (
+          visitor: (
+            node: { attrs: { level: number }; textContent: string; type: { name: string } },
+            position: number,
+          ) => void,
+        ) => {
+          for (const node of editorState.outlineNodes) {
+            visitor(
+              {
+                attrs: { level: node.level },
+                textContent: node.title,
+                type: { name: node.type },
+              },
+              node.position,
+            );
+          }
+        },
+        textBetween: () => editorState.selectedText,
+      },
     },
     chain: () => chain,
     commands: { setContent: vi.fn() },
@@ -164,10 +190,10 @@ vi.mock("@tiptap/react", async () => {
       }, []);
       return selector({ editor });
     },
-    EditorContent: () =>
+    EditorContent: ({ className }: { className?: string }) =>
       React.createElement(
-        React.Fragment,
-        null,
+        "div",
+        { className },
         React.createElement(
           "button",
           { type: "button", onClick: () => onUpdate?.({ editor }) },
@@ -194,7 +220,6 @@ vi.mock("../lib/documents", async (importOriginal) => {
   return {
     ...actual,
     pickDocumentImage: vi.fn(),
-    renderSavedDocument: vi.fn(),
     saveDocument: vi.fn(),
   };
 });
@@ -246,12 +271,12 @@ describe("DocumentEditor", () => {
   beforeEach(() => {
     editorState.activeTable = false;
     editorState.alignment = "left";
+    editorState.outlineNodes = [];
     editorState.selectedText = "";
     editorState.selection = { from: 1, to: 1, empty: true };
     for (const command of Object.values(editorCommandSpies)) command.mockReset();
     vi.mocked(documentsApi.saveDocument).mockReset();
     vi.mocked(documentsApi.pickDocumentImage).mockReset();
-    vi.mocked(documentsApi.renderSavedDocument).mockReset();
     vi.mocked(graphApi.createGraphSnapshotAttachment).mockReset();
     vi.mocked(graphApi.listGraphWorkspaces).mockReset().mockResolvedValue([]);
     noticeSpies.add.mockReset();
@@ -393,6 +418,39 @@ describe("DocumentEditor", () => {
     ).toHaveAttribute("aria-disabled", "true");
   });
 
+  it("derives the report outline from non-empty H1-H3 headings and focuses a selection", async () => {
+    const user = userEvent.setup();
+    editorState.outlineNodes = [
+      { level: 1, position: 3, title: " Executive summary ", type: "heading" },
+      { level: 2, position: 14, title: "   ", type: "heading" },
+      { level: 3, position: 21, title: "Findings", type: "heading" },
+      { level: 1, position: 30, title: "Not a heading", type: "paragraph" },
+    ];
+    render(
+      <DocumentEditor
+        projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+        document={reportDocument}
+        onSaved={vi.fn()}
+        onReload={vi.fn()}
+        onBusyChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Simulate edit" }));
+    await user.click(screen.getByRole("button", { name: "More document actions" }));
+    const actionsMenu = await screen.findByRole("dialog", { name: "Report" });
+    const summary = within(actionsMenu).getByRole("button", { name: "Executive summary" });
+    const findings = within(actionsMenu).getByRole("button", { name: "Findings" });
+    expect(
+      summary.compareDocumentPosition(findings) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(within(actionsMenu).queryByText("Not a heading")).toBeNull();
+
+    await user.click(findings);
+    expect(editorCommandSpies.focus).toHaveBeenCalled();
+    expect(editorCommandSpies.setTextSelection).toHaveBeenCalledWith(22);
+  });
+
   it("cancels an insertion without changing the document and restores the caret", async () => {
     const user = userEvent.setup();
     editorState.selection = { from: 7, to: 7, empty: true };
@@ -498,6 +556,22 @@ describe("DocumentEditor", () => {
     const editor = container.querySelector(".document-editor");
     expect(editor).toHaveClass("w-full");
     expect(editor).not.toHaveClass("max-w-4xl");
+  });
+
+  it("keeps the report paper out of the dark prose theme", () => {
+    const { container } = render(
+      <DocumentEditor
+        projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+        document={reportDocument}
+        onSaved={vi.fn()}
+        onReload={vi.fn()}
+        onBusyChange={vi.fn()}
+      />,
+    );
+
+    const paper = container.querySelector(".report-page-surface");
+    expect(paper).toHaveClass("prose");
+    expect(paper).not.toHaveClass("prose-invert");
   });
 
   it("collects publication overrides before opening the native save picker", async () => {

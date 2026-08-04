@@ -94,7 +94,6 @@
     "allow-create-project-backup",
     "allow-load-document",
     "allow-save-document",
-    "allow-render-saved-document",
     "allow-unlock-project",
     "allow-unlock-passphrase-project",
     "allow-lock-project",

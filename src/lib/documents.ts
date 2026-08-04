@@ -49,11 +49,6 @@ export interface DocumentEnvelope {
   reportProperties?: ReportProperties;
 }
 
-export interface RenderedDocument {
-  html: string;
-  plainText: string;
-}
-
 export type DocumentExportFormat = "pdf";
 export type PublicationPaperSize = "a4" | "letter";
 export type PublicationOrientation = "portrait" | "landscape";
@@ -269,13 +264,6 @@ export function saveDocument(
     root,
     reportProperties,
   });
-}
-
-export function renderSavedDocument(
-  projectId: string,
-  documentId: string,
-): Promise<RenderedDocument> {
-  return invoke<RenderedDocument>("render_saved_document", { projectId, documentId });
 }
 
 export function exportSavedDocument(

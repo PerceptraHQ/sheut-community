@@ -704,7 +704,7 @@ export default function DocumentEditor({
       <EditorContent
         editor={editor}
         data-paper-size={isReport ? previewPaperSize : undefined}
-        className={`editor-surface prose prose-invert prose-sheut mx-auto max-w-none ${isReport ? "report-page-surface" : "w-[min(100%,56rem)]"}`}
+        className={`editor-surface prose prose-sheut mx-auto max-w-none ${isReport ? "report-page-surface" : "prose-invert w-[min(100%,56rem)]"}`}
       />
     </article>
   );

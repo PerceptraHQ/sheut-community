@@ -555,7 +555,6 @@
         return false;
       }
     },
-    render_saved_document: (payload) => ids(payload, "projectId", "documentId"),
     unlock_project: (payload) => ids(payload, "projectId"),
     unlock_passphrase_project: passphraseProject,
     lock_project: (payload) => ids(payload, "projectId"),

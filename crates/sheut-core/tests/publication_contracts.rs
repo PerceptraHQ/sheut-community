@@ -90,6 +90,10 @@ fn evidence_media_types_are_detected_from_bounded_inert_content() {
         "application/zip"
     );
     assert_eq!(
+        sheut_core::detect_evidence_media_type("unsupported.docx", b"PK\x03\x04archive").unwrap(),
+        "application/zip"
+    );
+    assert_eq!(
         sheut_core::detect_evidence_media_type("capture.mp4", b"\0\0\0\x18ftypisomdata").unwrap(),
         "video/mp4"
     );

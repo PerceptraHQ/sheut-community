@@ -3,7 +3,7 @@ use sheut_core::{BrandProfile, DocumentEnvelope, PublicationFormat, PublicationS
 #[cfg(test)]
 use sheut_core::{
     LocalId, PageOrientation, PaperSize, PublicationSettings, PublicationSource, TlpMarking,
-    render_document,
+    document_plain_text,
 };
 use sheut_publish::{PublicationAssets, PublicationIr, render_publication_with_assets};
 
@@ -98,9 +98,8 @@ pub(super) fn render_freeform_snapshot(
 
 #[cfg(test)]
 pub(super) fn suggested_file_name(document: &DocumentEnvelope, format: ExportFormat) -> String {
-    let rendered = render_document(document);
-    let title = rendered
-        .plain_text()
+    let plain_text = document_plain_text(document);
+    let title = plain_text
         .lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("Sheut document");

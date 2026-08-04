@@ -21,9 +21,8 @@ use sheut_core::{
     ImageMediaType, LocalId, MAX_EVIDENCE_FILE_BYTES, MAX_IMAGE_ATTACHMENT_BYTES, MitreCatalog,
     MitreTechniqueReference, PageFurniture, PageOrientation, PaperSize, ProjectDataReferenceKind,
     PublicationRecord, PublicationReleaseEntry, PublicationSettings, PublicationSnapshot,
-    PublicationSource, PublicationStatus, RenderedDocument, ReportProperties, Revision,
-    SemanticRelationshipDraft, TechniqueAssessment, TechniqueObservation, TechniqueOutcome,
-    TlpMarking, render_document,
+    PublicationSource, PublicationStatus, ReportProperties, Revision, SemanticRelationshipDraft,
+    TechniqueAssessment, TechniqueObservation, TechniqueOutcome, TlpMarking,
 };
 use sheut_mitre::{
     CatalogSnapshot, CatalogStatus, CatalogStore, MAX_MAPPING_FILE_BYTES, MAX_MITRE_SOURCE_BYTES,
@@ -1860,22 +1859,6 @@ pub(super) async fn save_document(
         )
     })
     .await
-}
-
-#[tauri::command]
-pub(super) async fn render_saved_document(
-    project_id: String,
-    document_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<RenderedDocument, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let document_id = parse_document_id(&document_id)?;
-    let now_unix_ms = now_unix_ms()?;
-    let document = with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.load_document(project_id, document_id, now_unix_ms)
-    })
-    .await?;
-    Ok(render_document(&document))
 }
 
 #[tauri::command]

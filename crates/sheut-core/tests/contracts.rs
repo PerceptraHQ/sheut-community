@@ -6,7 +6,7 @@ use sheut_core::{
     GraphViewport, GraphWorkspace, ImageAttachmentMetadata, ImageMediaType, LocalId, MitreCatalog,
     MitreTechniqueReference, Position, ProjectMetadata, ReportAuthor, ReportProperties, Revision,
     SemanticRelationshipDraft, TechniqueAssessment, TechniqueObservation, TechniqueOutcome,
-    TlpMarking, VisualLink, WorkspaceItem, WorkspaceItemKind, WorkspaceMode, render_document,
+    TlpMarking, VisualLink, WorkspaceItem, WorkspaceItemKind, WorkspaceMode, document_plain_text,
 };
 
 const PROJECT_ID: &str = "6f9619ff-8b86-d011-b42d-00cf4fc964ff";
@@ -171,14 +171,10 @@ fn evidence_citations_keep_a_frozen_snapshot_and_reject_malformed_references() {
         citation.clone(),
     )
     .unwrap();
-    let rendered = render_document(&document);
     assert_eq!(
-        rendered.html(),
-        format!(
-            "<p><span data-sheut-evidence-citation=\"{TARGET_ID}\">[Captured storefront]</span></p>"
-        )
+        document_plain_text(&document),
+        "[Evidence: Captured storefront]"
     );
-    assert_eq!(rendered.plain_text(), "[Evidence: Captured storefront]");
 
     for invalid in [serde_json::json!(0), serde_json::json!("not-a-sha256")] {
         let mut malformed = citation.clone();
@@ -239,7 +235,7 @@ fn report_properties_are_valid_only_for_reports_and_reject_malformed_metadata() 
 }
 
 #[test]
-fn structured_documents_render_escaped_html_and_plain_text() {
+fn structured_documents_project_plain_text_without_formatting_payloads() {
     let document = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Investigation,
@@ -276,21 +272,14 @@ fn structured_documents_render_escaped_html_and_plain_text() {
     )
     .unwrap();
 
-    let rendered = render_document(&document);
     assert_eq!(
-        rendered.html(),
-        "<h1>Operation &lt;Shadow&gt;</h1><p><strong>Evidence &amp; notes</strong> <a href=\"https://example.com/a?x=1&amp;y=2\">source</a></p>"
-    );
-    assert_eq!(
-        rendered.plain_text(),
+        document_plain_text(&document),
         "Operation <Shadow>\nEvidence & notes source"
     );
-    assert!(!rendered.html().contains("onclick"));
-    assert!(!rendered.html().contains("target="));
 }
 
 #[test]
-fn text_alignment_is_bounded_and_preserved_in_derived_html() {
+fn text_alignment_is_bounded_in_structured_documents() {
     let document = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Report,
@@ -306,10 +295,7 @@ fn text_alignment_is_bounded_and_preserved_in_derived_html() {
     )
     .unwrap();
 
-    assert_eq!(
-        render_document(&document).html(),
-        "<p style=\"text-align:center\">Centered finding</p>"
-    );
+    assert_eq!(document_plain_text(&document), "Centered finding");
     let justified = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Report,
@@ -324,10 +310,7 @@ fn text_alignment_is_bounded_and_preserved_in_derived_html() {
         }),
     )
     .unwrap();
-    assert_eq!(
-        render_document(&justified).html(),
-        "<h3 style=\"text-align:justify\">Justified section</h3>"
-    );
+    assert_eq!(document_plain_text(&justified), "Justified section");
     assert_eq!(
         DocumentEnvelope::new(
             LocalId::parse(SOURCE_ID).unwrap(),
@@ -386,11 +369,7 @@ fn analyst_formatting_marks_and_task_lists_round_trip_through_rust() {
     .unwrap();
 
     assert_eq!(
-        render_document(&document).html(),
-        "<p><sub><sup><mark>TLP AMBER x2 H2O</mark></sup></sub></p><ul data-type=\"taskList\"><li data-checked=\"true\"><p>Validate evidence</p></li></ul>"
-    );
-    assert_eq!(
-        render_document(&document).plain_text(),
+        document_plain_text(&document),
         "TLP AMBER x2 H2O\n[x] Validate evidence"
     );
 
@@ -606,7 +585,7 @@ fn intelligence_nodes_keep_only_valid_stable_ids_and_frozen_snapshots() {
 }
 
 #[test]
-fn tables_and_callouts_render_from_canonical_json() {
+fn tables_and_callouts_project_plain_text_from_canonical_json() {
     let document = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Investigation,
@@ -670,13 +649,8 @@ fn tables_and_callouts_render_from_canonical_json() {
     )
     .unwrap();
 
-    let rendered = render_document(&document);
     assert_eq!(
-        rendered.html(),
-        "<aside data-sheut-callout=\"info\"><p>Validate before sharing</p></aside><table><tbody><tr><th><p>Indicator</p></th><th><p>Status</p></th></tr><tr><td><p>evil[.]example</p></td><td><p>Confirmed</p></td></tr></tbody></table>"
-    );
-    assert_eq!(
-        rendered.plain_text(),
+        document_plain_text(&document),
         "Validate before sharing\nIndicator\tStatus\nevil[.]example\tConfirmed"
     );
 }
@@ -777,14 +751,7 @@ fn canonical_image_nodes_reference_opaque_attachments_without_paths() {
         }),
     )
     .unwrap();
-    let rendered = render_document(&document);
-    assert_eq!(
-        rendered.html(),
-        format!(
-            "<figure data-sheut-attachment=\"{TARGET_ID}\"><figcaption>Screenshot &lt;one&gt;</figcaption></figure>"
-        )
-    );
-    assert_eq!(rendered.plain_text(), "[Image: Screenshot <one>]");
+    assert_eq!(document_plain_text(&document), "[Image: Screenshot <one>]");
 
     let injected_path = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
@@ -808,7 +775,7 @@ fn canonical_image_nodes_reference_opaque_attachments_without_paths() {
 }
 
 #[test]
-fn guided_image_nodes_reference_project_evidence_without_rendering_internal_ids() {
+fn evidence_image_nodes_reference_project_evidence_without_projecting_internal_ids() {
     let document = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Report,
@@ -830,13 +797,9 @@ fn guided_image_nodes_reference_project_evidence_without_rendering_internal_ids(
     )
     .unwrap();
 
-    let rendered = render_document(&document);
-    assert_eq!(
-        rendered.html(),
-        "<figure data-sheut-evidence-image><figcaption>Captured storefront</figcaption></figure>"
-    );
-    assert!(!rendered.html().contains(TARGET_ID));
-    assert_eq!(rendered.plain_text(), "[Image: Captured storefront]");
+    let plain_text = document_plain_text(&document);
+    assert!(!plain_text.contains(TARGET_ID));
+    assert_eq!(plain_text, "[Image: Captured storefront]");
 
     let invalid_placement = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
@@ -896,7 +859,7 @@ fn malformed_tables_and_unknown_callout_tones_are_rejected() {
 }
 
 #[test]
-fn unsafe_links_render_as_plain_text() {
+fn unsafe_link_targets_do_not_enter_the_plain_text_projection() {
     let document = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Investigation,
@@ -925,12 +888,10 @@ fn unsafe_links_render_as_plain_text() {
     )
     .unwrap();
 
-    let rendered = render_document(&document);
     assert_eq!(
-        rendered.html(),
-        "<p>do not run</p><p>control characters are unsafe</p>"
+        document_plain_text(&document),
+        "do not run\ncontrol characters are unsafe"
     );
-    assert!(!rendered.html().contains("javascript"));
 }
 
 #[test]

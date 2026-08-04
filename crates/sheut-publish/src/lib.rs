@@ -15,7 +15,7 @@ use serde_json::Value as JsonValue;
 use sheut_core::{
     BrandProfile, BrandTypeface, CoverTreatment, DocumentEnvelope, EvidenceFileMetadata,
     ImageMediaType, LocalId, PageOrientation, PublicationSnapshot, PublicationStatus,
-    render_document,
+    document_plain_text,
 };
 use typst::foundations::{Bytes, Dict, IntoValue, Smart};
 use typst_as_lib::TypstEngine;
@@ -555,7 +555,7 @@ const TYPST_TEMPLATE: &str = r##"
   #grid(
     columns: (1fr, auto, 1fr),
     align: (left + horizon, center + horizon, right + horizon),
-    text(font: inputs.heading_font, size: 7.3pt, weight: 550, report-number),
+    if inputs.header { text(font: inputs.heading_font, size: 7.3pt, weight: 550, report-number) } else { [] },
     align(center + horizon)[#tlp-badge],
     [],
   )
@@ -684,7 +684,7 @@ const TYPST_TEMPLATE: &str = r##"
   paper: inputs.paper,
   flipped: inputs.landscape,
   margin: (x: 14mm, top: 18mm, bottom: 18mm),
-  header: if inputs.header { running-top } else { none },
+  header: if inputs.header or inputs.marking != "" { running-top } else { none },
   footer: if inputs.footer or inputs.page_numbers { running-bottom } else { none },
   numbering: none,
   fill: paper,
@@ -814,8 +814,7 @@ impl PublicationIr {
                     .collect(),
             );
         }
-        let fallback = render_document(document)
-            .plain_text()
+        let fallback = document_plain_text(document)
             .lines()
             .find(|line| !line.trim().is_empty())
             .unwrap_or("Untitled document")
@@ -3217,6 +3216,18 @@ mod tests {
             TYPST_TEMPLATE.contains("align: (left + horizon, center + horizon, right + horizon)")
         );
         assert!(TYPST_TEMPLATE.contains("align(center + horizon)[#tlp-badge]"));
+    }
+
+    #[test]
+    fn cover_and_running_pages_retain_tlp_handling() {
+        assert_eq!(TYPST_TEMPLATE.matches("#tlp-badge").count(), 3);
+        assert!(TYPST_TEMPLATE.contains("align(right + horizon)[#tlp-badge]"));
+        assert!(TYPST_TEMPLATE.contains("align(center + horizon)[#tlp-badge]"));
+        assert!(TYPST_TEMPLATE.contains("align(center)[#tlp-badge]"));
+        assert!(
+            TYPST_TEMPLATE
+                .contains("header: if inputs.header or inputs.marking != \"\" { running-top }")
+        );
     }
 
     #[test]

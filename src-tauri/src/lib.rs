@@ -102,7 +102,6 @@ pub fn run() {
             commands::create_project_backup,
             commands::load_document,
             commands::save_document,
-            commands::render_saved_document,
             commands::unlock_project,
             commands::unlock_passphrase_project,
             commands::lock_project,

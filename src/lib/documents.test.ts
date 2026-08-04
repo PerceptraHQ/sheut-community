@@ -12,7 +12,6 @@ import {
   listPublicationRecords,
   loadDocumentImage,
   pickDocumentImage,
-  renderSavedDocument,
   reproducePublication,
   restoreDocument,
   restoreDocumentRevision,
@@ -40,7 +39,6 @@ describe("document command boundary", () => {
     await compareDocumentRevisions(PROJECT_ID, DOCUMENT_ID, 1, 2);
     await restoreDocumentRevision(PROJECT_ID, DOCUMENT_ID, 1, 2);
     await saveDocument(PROJECT_ID, DOCUMENT_ID, 4, root);
-    await renderSavedDocument(PROJECT_ID, DOCUMENT_ID);
     await exportSavedDocument(PROJECT_ID, DOCUMENT_ID, {
       format: "pdf",
       paperSize: "letter",
@@ -99,11 +97,7 @@ describe("document command boundary", () => {
       expectedRevision: 4,
       root,
     });
-    expect(invoke).toHaveBeenNthCalledWith(10, "render_saved_document", {
-      projectId: PROJECT_ID,
-      documentId: DOCUMENT_ID,
-    });
-    expect(invoke).toHaveBeenNthCalledWith(11, "export_saved_document", {
+    expect(invoke).toHaveBeenNthCalledWith(10, "export_saved_document", {
       projectId: PROJECT_ID,
       documentId: DOCUMENT_ID,
       options: {
@@ -123,11 +117,11 @@ describe("document command boundary", () => {
         fileName: "incident-summary",
       },
     });
-    expect(invoke).toHaveBeenNthCalledWith(12, "pick_document_image", {
+    expect(invoke).toHaveBeenNthCalledWith(11, "pick_document_image", {
       projectId: PROJECT_ID,
       documentId: DOCUMENT_ID,
     });
-    expect(invoke).toHaveBeenNthCalledWith(13, "load_document_image", {
+    expect(invoke).toHaveBeenNthCalledWith(12, "load_document_image", {
       projectId: PROJECT_ID,
       documentId: DOCUMENT_ID,
       attachmentId: "d35e8b1e-10c7-4ee5-9f2b-c6ac197ca8eb",
