@@ -362,11 +362,11 @@ const TYPST_TEMPLATE: &str = r##"
       )
     ]
   } else if item.kind == "table" {
-    if item.layout == "landscape-page" {
+    if item.layout == "landscape-page" and not inputs.landscape {
       pagebreak(weak: true)
       set page(flipped: true)
       render-document-table(item)
-      pagebreak()
+      pagebreak(weak: true)
       set page(flipped: inputs.landscape)
     } else {
       render-document-table(item)
@@ -616,7 +616,7 @@ const TYPST_TEMPLATE: &str = r##"
     align: top,
     [
       #set par(leading: 0.12em)
-      #text(font: inputs.heading_font, size: 40pt, weight: 780, tracking: 0.015em, fill: white, inputs.family)
+      #text(font: inputs.heading_font, size: 32pt, weight: 780, tracking: 0.012em, fill: white, inputs.family)
     ],
     [
       #set par(leading: 0.2em)
@@ -638,7 +638,17 @@ const TYPST_TEMPLATE: &str = r##"
     if authors == "" { [] } else {[
       #text(font: inputs.heading_font, size: 6.5pt, weight: 650, tracking: 0.1em, fill: luma(220), author-label) \
       #v(3pt)
-      #text(font: inputs.body_font, size: 10pt, weight: 570, fill: white, authors)
+      #stack(
+        dir: ttb,
+        spacing: 2pt,
+        ..authors.split("\n").map(author => text(
+          font: inputs.body_font,
+          size: 10pt,
+          weight: 570,
+          fill: white,
+          author,
+        )),
+      )
     ]},
     [
       #text(font: inputs.heading_font, size: 6.5pt, weight: 650, tracking: 0.1em, fill: luma(220), [REPORT ID]) \
@@ -752,7 +762,7 @@ impl PublicationIr {
                     )
                 })
                 .collect::<Vec<_>>()
-                .join("; ");
+                .join("\n");
             let mut administration =
                 PublicationSection::new("report_administration", "Report administration");
             let mut rows = vec![
@@ -1525,6 +1535,7 @@ fn typst_inputs(
     let mut inputs = Dict::new();
     let fonts = PublicationFonts::from_brand(brand);
     let brand_name = brand.map_or("Sheut", BrandProfile::organization_name);
+    let report_number = publication.metadata("report_number");
     inputs.insert("title".into(), publication.title.clone().into_value());
     inputs.insert("eyebrow".into(), publication.eyebrow.clone().into_value());
     inputs.insert(
@@ -1537,14 +1548,11 @@ fn typst_inputs(
     );
     inputs.insert(
         "family".into(),
-        publication_family(&publication.eyebrow).into_value(),
+        cover_family(&publication.eyebrow, report_number).into_value(),
     );
     inputs.insert(
         "report_number".into(),
-        publication
-            .metadata("report_number")
-            .unwrap_or("")
-            .into_value(),
+        report_number.unwrap_or("").into_value(),
     );
     inputs.insert(
         "publication_date".into(),
@@ -1701,6 +1709,15 @@ fn publication_family(eyebrow: &str) -> String {
         .map_or(eyebrow, |(_, family)| family)
         .trim()
         .to_owned()
+}
+
+fn cover_family(eyebrow: &str, report_number: Option<&str>) -> String {
+    report_number
+        .filter(|value| !value.trim().is_empty())
+        .map_or_else(
+            || publication_family(eyebrow).to_uppercase(),
+            |_| "THREAT INTELLIGENCE REPORT".to_owned(),
+        )
 }
 
 fn tlp_colors(marking: sheut_core::TlpMarking) -> (&'static str, &'static str) {
@@ -2896,14 +2913,11 @@ fn is_safe_publication_link(href: &str) -> bool {
 }
 
 fn table_from_node(node: &JsonValue) -> Option<PublicationBlock> {
-    let layout = match node
+    let requested_landscape = node
         .get("attrs")
         .and_then(|attrs| attrs.get("layout"))
         .and_then(JsonValue::as_str)
-    {
-        Some("landscape-page") => PublicationTableLayout::LandscapePage,
-        _ => PublicationTableLayout::FitPage,
-    };
+        == Some("landscape-page");
     let widths = node
         .get("content")
         .and_then(JsonValue::as_array)
@@ -2950,6 +2964,18 @@ fn table_from_node(node: &JsonValue) -> Option<PublicationBlock> {
     if rows.is_empty() {
         return None;
     }
+    let layout = if requested_landscape
+        && (headers.len() >= 6
+            || widths
+                .iter()
+                .map(|width| usize::from(*width))
+                .sum::<usize>()
+                >= 720)
+    {
+        PublicationTableLayout::LandscapePage
+    } else {
+        PublicationTableLayout::FitPage
+    };
     Some(PublicationBlock::Table {
         headers: headers.clone(),
         rows,
@@ -3030,17 +3056,26 @@ mod tests {
 
     use super::{
         EvidenceIndexItem, GEIST_FONT, GEIST_MONO_FONT, PublicationAssets, PublicationBlock,
-        PublicationIr, PublicationSection, SOURCE_SERIF_FONT, TYPST_TEMPLATE, author_label,
-        evidence_image_bounds, fit_image_dimensions, typst_inputs,
+        PublicationInlineSpan, PublicationIr, PublicationRichText, PublicationSection,
+        SOURCE_SERIF_FONT, TYPST_TEMPLATE, author_label, cover_family, evidence_image_bounds,
+        fit_image_dimensions, table_from_node, typst_inputs,
     };
 
-    fn collect_frame_content(frame: &Frame, text: &mut String, image_count: &mut usize) {
+    fn collect_frame_content(
+        frame: &Frame,
+        text: &mut String,
+        image_count: &mut usize,
+        link_count: &mut usize,
+    ) {
         for (_, item) in frame.items() {
             match item {
-                FrameItem::Group(group) => collect_frame_content(&group.frame, text, image_count),
+                FrameItem::Group(group) => {
+                    collect_frame_content(&group.frame, text, image_count, link_count);
+                }
                 FrameItem::Text(item) => text.push_str(&item.text),
                 FrameItem::Image(..) => *image_count += 1,
-                FrameItem::Shape(..) | FrameItem::Link(..) | FrameItem::Tag(..) => {}
+                FrameItem::Link(..) => *link_count += 1,
+                FrameItem::Shape(..) | FrameItem::Tag(..) => {}
             }
         }
     }
@@ -3053,6 +3088,19 @@ mod tests {
             "Authors"
         );
         assert_eq!(author_label("Alex Morgan\nNoah Chen"), "Authors");
+    }
+
+    #[test]
+    fn report_cover_uses_a_descriptive_product_label_instead_of_a_generic_family() {
+        assert_eq!(
+            cover_family("Report", Some("RPT-0042")),
+            "THREAT INTELLIGENCE REPORT"
+        );
+        assert_eq!(cover_family("Analyst note", None), "ANALYST NOTE");
+        assert!(
+            TYPST_TEMPLATE
+                .contains("size: 32pt, weight: 780, tracking: 0.012em, fill: white, inputs.family")
+        );
     }
 
     #[test]
@@ -3088,6 +3136,37 @@ mod tests {
     fn typst_template_renders_intentional_paragraph_gaps_as_fixed_space() {
         assert!(TYPST_TEMPLATE.contains("item.kind == \"paragraph-gap\""));
         assert!(TYPST_TEMPLATE.contains("block(height: 8pt)[]"));
+        assert!(TYPST_TEMPLATE.contains("table.header(..item.headers.map"));
+        assert!(
+            TYPST_TEMPLATE
+                .contains("if item.layout == \"landscape-page\" and not inputs.landscape")
+        );
+        assert!(TYPST_TEMPLATE.contains("set page(flipped: true)"));
+        assert!(
+            TYPST_TEMPLATE.contains("render-document-table(item)\n      pagebreak(weak: true)")
+        );
+    }
+
+    #[test]
+    fn narrow_tables_cannot_force_a_landscape_page() {
+        let narrow = serde_json::json!({
+            "type": "table",
+            "attrs": {"layout": "landscape-page"},
+            "content": [
+                {"type": "tableRow", "content": [
+                    {"type": "tableHeader", "attrs": {"colwidth": [200]}, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "A"}]}]},
+                    {"type": "tableHeader", "attrs": {"colwidth": [220]}, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "B"}]}]}
+                ]},
+                {"type": "tableRow", "content": [
+                    {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "1"}]}]},
+                    {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "2"}]}]}
+                ]}
+            ]
+        });
+        let Some(PublicationBlock::Table { layout, .. }) = table_from_node(&narrow) else {
+            panic!("table must project into publication IR");
+        };
+        assert_eq!(layout, super::PublicationTableLayout::FitPage);
     }
 
     #[test]
@@ -3122,11 +3201,19 @@ mod tests {
                 anchor: "evidence-f8edb3d1".to_owned(),
             }],
         });
+        let mut body = PublicationSection::new("document", "");
+        body.blocks.push(PublicationBlock::EvidenceImage {
+            evidence_id,
+            alt: "Captured storefront".to_owned(),
+            title: Some("Landing page before redirect".to_owned()),
+            placement: super::EvidenceImagePlacement::Inline,
+            figure_label: "1".to_owned(),
+        });
         let publication = PublicationIr::new(
             "Evidence report".to_owned(),
             "Report".to_owned(),
             BTreeMap::new(),
-            vec![section],
+            vec![body, section],
         )
         .unwrap();
         let mut png = Cursor::new(Vec::new());
@@ -3175,14 +3262,21 @@ mod tests {
         typst_pdf::pdf(&document, &Default::default()).unwrap();
         let mut rendered_text = String::new();
         let mut image_count = 0;
+        let mut link_count = 0;
         for page in document.pages() {
-            collect_frame_content(&page.frame, &mut rendered_text, &mut image_count);
+            collect_frame_content(
+                &page.frame,
+                &mut rendered_text,
+                &mut image_count,
+                &mut link_count,
+            );
         }
 
         assert!(
-            image_count > 0,
-            "the evidence preview must render an image frame"
+            image_count >= 2,
+            "the body figure and appendix preview must both render image frames"
         );
+        assert!(rendered_text.contains("Figure 1."));
         assert!(rendered_text.contains("Evidence image"));
         assert!(rendered_text.contains("ANALYST NOTES"));
         assert!(rendered_text.contains("Preserve the original viewport and redirect chain."));
@@ -3193,9 +3287,236 @@ mod tests {
     }
 
     #[test]
+    fn evidence_citations_add_an_internal_link_to_the_appendix_entry() {
+        let evidence_id = LocalId::parse("f8edb3d1-6705-4f64-9260-d7dc888f0512").unwrap();
+        let profile = BrandProfile::project_default(
+            LocalId::parse("110b83fb-9fdb-4133-a29b-e75725bb6d0c").unwrap(),
+            "Example organization",
+            1_000,
+        )
+        .unwrap();
+        let settings = PublicationSettings::from_brand(&profile, PublicationFormat::Pdf);
+        let snapshot = PublicationSnapshot::new(
+            LocalId::parse("ec6ed71e-a754-4b32-b692-50f03f00154f").unwrap(),
+            PublicationSource::FreeformDocument {
+                document_id: LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap(),
+                revision: Revision::new(1).unwrap(),
+            },
+            settings,
+            2_000,
+        )
+        .unwrap();
+        let compile_link_count = |with_citation: bool| {
+            let mut body = PublicationSection::new("document", "");
+            if with_citation {
+                body.blocks
+                    .push(PublicationBlock::Paragraph(PublicationRichText {
+                        spans: vec![PublicationInlineSpan {
+                            text: String::new(),
+                            bold: false,
+                            italic: false,
+                            underline: false,
+                            strike: false,
+                            code: false,
+                            highlight: false,
+                            subscript: false,
+                            superscript: false,
+                            font_family: None,
+                            font_size: None,
+                            color: None,
+                            project_reference: None,
+                            href: None,
+                            evidence_id: Some(evidence_id),
+                            evidence_label: Some("Captured storefront".to_owned()),
+                            evidence_number: Some(1),
+                        }],
+                    }));
+            }
+            let mut appendix = PublicationSection::new(
+                "appendix_evidence_details",
+                "Evidence extracts and methodology details",
+            );
+            appendix.blocks.push(PublicationBlock::EvidenceIndex {
+                items: vec![EvidenceIndexItem {
+                    evidence_id,
+                    label: "Captured storefront".to_owned(),
+                    section_titles: vec!["Assessment".to_owned()],
+                    anchor: format!("evidence-{evidence_id}"),
+                }],
+            });
+            let publication = PublicationIr::new(
+                "Evidence report".to_owned(),
+                "Report".to_owned(),
+                BTreeMap::new(),
+                vec![body, appendix],
+            )
+            .unwrap();
+            let engine = TypstEngine::builder()
+                .main_file(TYPST_TEMPLATE)
+                .fonts([GEIST_FONT, GEIST_MONO_FONT, SOURCE_SERIF_FONT])
+                .build();
+            let document = engine
+                .compile_with_input(typst_inputs(&publication, &snapshot, Some(&profile), None))
+                .output
+                .unwrap();
+            typst_pdf::pdf(&document, &Default::default()).unwrap();
+            let mut text = String::new();
+            let mut image_count = 0;
+            let mut link_count = 0;
+            for page in document.pages() {
+                collect_frame_content(&page.frame, &mut text, &mut image_count, &mut link_count);
+            }
+            link_count
+        };
+
+        assert_eq!(compile_link_count(true), compile_link_count(false) + 1);
+    }
+
+    #[test]
     fn typst_cover_masthead_uses_saved_brand_name_without_a_fixed_product_label() {
         assert!(TYPST_TEMPLATE.contains("upper(inputs.brand_name)"));
         assert!(!TYPST_TEMPLATE.contains("INTELLIGENCE PRODUCT"));
+    }
+
+    #[test]
+    fn analyst_text_that_looks_like_typst_is_rendered_as_inert_literal_content() {
+        let profile = BrandProfile::project_default(
+            LocalId::parse("110b83fb-9fdb-4133-a29b-e75725bb6d0c").unwrap(),
+            "Example organization",
+            1_000,
+        )
+        .unwrap();
+        let settings = PublicationSettings::from_brand(&profile, PublicationFormat::Pdf);
+        let snapshot = PublicationSnapshot::new(
+            LocalId::parse("ec6ed71e-a754-4b32-b692-50f03f00154f").unwrap(),
+            PublicationSource::FreeformDocument {
+                document_id: LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap(),
+                revision: Revision::new(1).unwrap(),
+            },
+            settings,
+            2_000,
+        )
+        .unwrap();
+        let injected = "#eval(system.inputs) #set page(fill: red)";
+        let mut body = PublicationSection::new("document", "");
+        body.blocks
+            .push(PublicationBlock::Paragraph(PublicationRichText {
+                spans: vec![PublicationInlineSpan {
+                    text: injected.to_owned(),
+                    bold: false,
+                    italic: false,
+                    underline: false,
+                    strike: false,
+                    code: false,
+                    highlight: false,
+                    subscript: false,
+                    superscript: false,
+                    font_family: None,
+                    font_size: None,
+                    color: None,
+                    project_reference: None,
+                    href: None,
+                    evidence_id: None,
+                    evidence_label: None,
+                    evidence_number: None,
+                }],
+            }));
+        let publication = PublicationIr::new(
+            "Injection regression".to_owned(),
+            "Report".to_owned(),
+            BTreeMap::new(),
+            vec![body],
+        )
+        .unwrap();
+        let engine = TypstEngine::builder()
+            .main_file(TYPST_TEMPLATE)
+            .fonts([GEIST_FONT, GEIST_MONO_FONT, SOURCE_SERIF_FONT])
+            .build();
+        let document = engine
+            .compile_with_input(typst_inputs(&publication, &snapshot, Some(&profile), None))
+            .output
+            .expect("typed analyst text must compile without becoming Typst source");
+        typst_pdf::pdf(&document, &Default::default()).unwrap();
+        let mut rendered_text = String::new();
+        let mut image_count = 0;
+        let mut link_count = 0;
+        for page in document.pages() {
+            collect_frame_content(
+                &page.frame,
+                &mut rendered_text,
+                &mut image_count,
+                &mut link_count,
+            );
+        }
+        assert!(rendered_text.contains(injected));
+    }
+
+    #[test]
+    fn landscape_table_followed_by_page_break_does_not_create_an_empty_page() {
+        let profile = BrandProfile::project_default(
+            LocalId::parse("110b83fb-9fdb-4133-a29b-e75725bb6d0c").unwrap(),
+            "Example organization",
+            1_000,
+        )
+        .unwrap();
+        let settings = PublicationSettings::from_brand(&profile, PublicationFormat::Pdf);
+        let snapshot = PublicationSnapshot::new(
+            LocalId::parse("ec6ed71e-a754-4b32-b692-50f03f00154f").unwrap(),
+            PublicationSource::FreeformDocument {
+                document_id: LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap(),
+                revision: Revision::new(1).unwrap(),
+            },
+            settings,
+            2_000,
+        )
+        .unwrap();
+        let mut body = PublicationSection::new("document", "");
+        body.blocks.push(PublicationBlock::Table {
+            headers: vec!["Indicator".to_owned(), "Assessment".to_owned()],
+            rows: vec![vec!["example.test".to_owned(), "Malicious".to_owned()]],
+            widths: vec![360, 420],
+            layout: super::PublicationTableLayout::LandscapePage,
+        });
+        body.blocks.push(PublicationBlock::PageBreak);
+        body.blocks
+            .push(PublicationBlock::Paragraph(PublicationRichText {
+                spans: vec![PublicationInlineSpan {
+                    text: "Next authored page".to_owned(),
+                    bold: false,
+                    italic: false,
+                    underline: false,
+                    strike: false,
+                    code: false,
+                    highlight: false,
+                    subscript: false,
+                    superscript: false,
+                    font_family: None,
+                    font_size: None,
+                    color: None,
+                    project_reference: None,
+                    href: None,
+                    evidence_id: None,
+                    evidence_label: None,
+                    evidence_number: None,
+                }],
+            }));
+        let publication = PublicationIr::new(
+            "Pagination regression".to_owned(),
+            "Report".to_owned(),
+            BTreeMap::new(),
+            vec![body],
+        )
+        .unwrap();
+        let engine = TypstEngine::builder()
+            .main_file(TYPST_TEMPLATE)
+            .fonts([GEIST_FONT, GEIST_MONO_FONT, SOURCE_SERIF_FONT])
+            .build();
+        let document = engine
+            .compile_with_input(typst_inputs(&publication, &snapshot, Some(&profile), None))
+            .output
+            .expect("landscape pagination fixture must compile");
+        typst_pdf::pdf(&document, &Default::default()).unwrap();
+        assert_eq!(document.pages().len(), 4);
     }
 
     #[test]

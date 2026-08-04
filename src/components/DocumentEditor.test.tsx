@@ -354,6 +354,10 @@ describe("DocumentEditor", () => {
     for (const label of ["Evidence", "Image", "Table", /Page break/]) {
       expect(within(menu).getByText(label)).toBeVisible();
     }
+    await user.click(within(menu).getByText("Table"));
+    expect(
+      screen.getByRole("button", { name: "Landscape page is available for very wide tables" }),
+    ).toHaveAttribute("aria-disabled", "true");
   });
 
   it("cancels an insertion without changing the document and restores the caret", async () => {

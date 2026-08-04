@@ -961,6 +961,21 @@ fn documents_reject_raw_html_and_excessive_nesting() {
     )
     .unwrap_err();
     assert_eq!(too_deep.code(), DomainErrorCode::InvalidDocument);
+
+    let oversized = DocumentEnvelope::new(
+        id,
+        DocumentKind::Report,
+        revision,
+        serde_json::json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "x".repeat(1_048_576)}]
+            }]
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(oversized.code(), DomainErrorCode::InvalidDocument);
 }
 
 #[test]

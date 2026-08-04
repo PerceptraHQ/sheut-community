@@ -5,8 +5,8 @@ use sheut_core::{
     Revision, TlpMarking,
 };
 use sheut_publish::{
-    PublicationAssets, PublicationBlock, PublicationIr, PublishErrorCode, render_publication,
-    render_publication_with_assets,
+    PublicationAssets, PublicationBlock, PublicationIr, PublicationTableLayout, PublishErrorCode,
+    render_publication, render_publication_with_assets,
 };
 use std::io::Cursor;
 
@@ -94,8 +94,8 @@ fn document_native_report() -> DocumentEnvelope {
                 {"type": "horizontalRule"},
                 {"type": "table", "attrs": {"layout": "landscape-page"}, "content": [
                     {"type": "tableRow", "content": [
-                        {"type": "tableHeader", "attrs": {"colspan": 1, "rowspan": 1, "colwidth": [220]}, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Indicator"}]}]},
-                        {"type": "tableHeader", "attrs": {"colspan": 1, "rowspan": 1, "colwidth": [360]}, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Assessment"}]}]}
+                        {"type": "tableHeader", "attrs": {"colspan": 1, "rowspan": 1, "colwidth": [360]}, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Indicator"}]}]},
+                        {"type": "tableHeader", "attrs": {"colspan": 1, "rowspan": 1, "colwidth": [420]}, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Assessment"}]}]}
                     ]},
                     {"type": "tableRow", "content": [
                         {"type": "tableCell", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "example.test"}]}]},
@@ -109,7 +109,10 @@ fn document_native_report() -> DocumentEnvelope {
         ReportProperties::new(
             "RPT-0042",
             "Operation Night Glass",
-            vec![ReportAuthor::new("Alex Morgan", Some("Lead analyst")).unwrap()],
+            vec![
+                ReportAuthor::new("Alex Morgan", Some("Lead analyst")).unwrap(),
+                ReportAuthor::new("Noah Chen", Some("Senior analyst")).unwrap(),
+            ],
             Some("Perceptra Intelligence"),
             "2026-08-03",
         )
@@ -125,6 +128,11 @@ fn document_native_reports_keep_front_matter_heading_levels_and_page_breaks_for_
     assert_eq!(publication.title(), "Operation Night Glass");
     assert_eq!(publication.metadata("report_number"), Some("RPT-0042"));
     assert_eq!(publication.metadata("publication_date"), Some("2026-08-03"));
+    assert_eq!(
+        publication.metadata("authors"),
+        Some("Alex Morgan — Lead analyst\nNoah Chen — Senior analyst"),
+        "structured authors must remain separate cover lines",
+    );
 
     let administration = &publication.sections()[0];
     assert_eq!(administration.key(), "report_administration");
@@ -147,6 +155,19 @@ fn document_native_reports_keep_front_matter_heading_levels_and_page_breaks_for_
         .iter()
         .find(|section| section.key() == "document")
         .unwrap();
+    let heading_order = body
+        .blocks()
+        .iter()
+        .filter_map(|block| match block {
+            PublicationBlock::Heading { level, text, .. } => Some((*level, text.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        heading_order,
+        vec![(1, "Assessment"), (2, "Infrastructure"), (3, "Hosting")],
+        "the ordered H1-H3 stream is the source of the nested Typst outline",
+    );
     assert!(matches!(
         body.blocks()[0],
         PublicationBlock::Heading { level: 1, .. }
@@ -205,11 +226,23 @@ fn document_native_reports_keep_front_matter_heading_levels_and_page_breaks_for_
             .iter()
             .any(|block| matches!(block, PublicationBlock::TaskList(_)))
     );
-    assert!(
-        body.blocks()
-            .iter()
-            .any(|block| matches!(block, PublicationBlock::Table { .. }))
+    let table = body.blocks().iter().find_map(|block| match block {
+        PublicationBlock::Table {
+            headers,
+            rows,
+            widths,
+            layout,
+        } => Some((headers, rows, widths, layout)),
+        _ => None,
+    });
+    let (headers, rows, widths, layout) = table.expect("document table");
+    assert_eq!(headers, &["Indicator", "Assessment"]);
+    assert_eq!(
+        rows,
+        &[vec!["example.test".to_owned(), "Malicious".to_owned()]]
     );
+    assert_eq!(widths, &[360, 420]);
+    assert_eq!(*layout, PublicationTableLayout::LandscapePage);
     assert!(
         body.blocks()
             .iter()

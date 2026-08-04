@@ -59,6 +59,7 @@ import {
   REPORT_PARAGRAPH_SPACING,
   REPORT_TEXT_COLORS,
 } from "../lib/semantic-formatting-extension";
+import { tableRequiresLandscape } from "../lib/semantic-table-extension";
 
 interface DocumentToolbarProps {
   editor: Editor;
@@ -154,6 +155,7 @@ export function DocumentToolbar({
       blockquote: currentEditor.isActive("blockquote"),
       codeBlock: currentEditor.isActive("codeBlock"),
       table: currentEditor.isActive("table"),
+      tableRequiresLandscape: selectedTableRequiresLandscape(currentEditor),
       link: currentEditor.isActive("link"),
     }),
   });
@@ -766,8 +768,13 @@ export function DocumentToolbar({
                     <span>Fit page</span>
                   </ToolbarButton>
                   <ToolbarButton
-                    label="Place table on a landscape page"
+                    label={
+                      state.tableRequiresLandscape
+                        ? "Place table on a landscape page"
+                        : "Landscape page is available for very wide tables"
+                    }
                     wide
+                    disabled={!state.tableRequiresLandscape}
                     onClick={() =>
                       editor
                         .chain()
@@ -786,6 +793,19 @@ export function DocumentToolbar({
       </div>
     </Tooltip.Provider>
   );
+}
+
+function selectedTableRequiresLandscape(editor: Editor): boolean {
+  const $from = editor.state.selection.$from;
+  if (!$from) return false;
+  for (let depth = $from.depth; depth >= 0; depth -= 1) {
+    const node = $from.node(depth);
+    if (node.type.name === "table") {
+      const tableJson: unknown = node.toJSON();
+      return tableRequiresLandscape(tableJson);
+    }
+  }
+  return false;
 }
 
 interface ToolbarButtonProps {
