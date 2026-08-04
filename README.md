@@ -31,10 +31,8 @@ reporting into one encrypted project—without making analysts work in raw JSON.
 
 <p align="center">
   <img src="docs/assets/screenshots/evidence-vault.png" width="49%" alt="Encrypted evidence with source, hash, tags, and analyst notes" />
-  <img src="docs/assets/screenshots/mitre-attack.png" width="49%" alt="Mapped MITRE ATT&CK observations in Sheut" />
+  <img src="docs/assets/screenshots/project-overview.png" width="49%" alt="An encrypted local Sheut project overview" />
 </p>
-
-![An encrypted local Sheut project overview](docs/assets/screenshots/project-overview.png)
 
 > [!WARNING]
 > Sheut is early alpha software and is not ready for operational intelligence.
