@@ -65,6 +65,15 @@ describe("fluid application shell", () => {
     );
   });
 
+  it("expands advanced formatting inside the single toolbar row", () => {
+    expect(appCss).toMatch(
+      /data-more-formatting-open[^}]*\.editor-toolbar-formatting\s*>\s*:not\([^}]*display:\s*none;/su,
+    );
+    expect(appCss).toMatch(
+      /data-more-formatting-open[^}]*\.editor-toolbar-overflow-priority\s*\{[^}]*position:\s*static;[^}]*flex-wrap:\s*nowrap;[^}]*overflow-x:\s*auto;/su,
+    );
+  });
+
   it("removes the redundant command-row gap from the document workspace", () => {
     expect(appCss).toMatch(
       /\.workspace\[data-active-view="investigations"\]\s*\{[^}]*grid-template-rows:\s*36px minmax\(0, 1fr\);/su,

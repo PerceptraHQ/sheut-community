@@ -486,7 +486,7 @@ describe("DocumentEditor", () => {
     await user.click(screen.getByRole("combobox", { name: "Paper size" }));
     await user.click(await screen.findByRole("option", { name: "Letter US Letter" }));
     await user.click(screen.getByRole("combobox", { name: "Orientation" }));
-    await user.click(screen.getByRole("option", { name: "Landscape Wide pages" }));
+    await user.click(await screen.findByRole("option", { name: "Landscape Wide pages" }));
     await user.click(screen.getByRole("combobox", { name: "TLP marking" }));
     await user.click(
       await screen.findByRole("option", { name: "TLP:AMBER+STRICT — Organization only" }),

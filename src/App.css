@@ -1147,26 +1147,28 @@
 }
 
 .editor-toolbar-overflow-priority {
-  position: absolute;
-  top: calc(100% + 0.25rem);
-  right: 0.5rem;
   display: none;
-  width: min(48rem, calc(100% - 1rem));
-  max-height: min(18rem, calc(100vh - 8rem));
   align-items: center;
-  flex-wrap: wrap;
   gap: 0.25rem;
-  overflow: auto;
-  border: 1px solid var(--color-panel-border);
-  border-radius: 4px;
-  padding: 0.5rem;
-  color: var(--color-copy-secondary);
-  background: var(--color-panel-raised);
-  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 36%);
+}
+
+.editor-toolbar-unified[data-more-formatting-open]
+  .editor-toolbar-formatting
+  > :not(.editor-toolbar-more-trigger, .editor-toolbar-overflow-priority) {
+  display: none;
 }
 
 .editor-toolbar-unified[data-more-formatting-open] .editor-toolbar-overflow-priority {
+  position: static;
   display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.125rem;
+  scrollbar-color: var(--color-panel-border) transparent;
+  scrollbar-width: thin;
 }
 
 @media (width >= 2400px) {
