@@ -473,15 +473,15 @@ const TYPST_TEMPLATE: &str = r##"
           #if entry.has_image {
             v(5pt)
             align(center)[
-              image(
+              #image(
                 entry.bytes,
                 width: entry.width_mm * 1mm,
                 height: entry.height_mm * 1mm,
                 fit: "contain",
                 alt: entry.title,
               )
-              v(3pt)
-              text(
+              #v(3pt)
+              #text(
                 font: inputs.body_font,
                 size: 7.5pt,
                 style: "italic",
@@ -2606,6 +2606,12 @@ fn evidence_index_details(
     if let Some(metadata) =
         assets.and_then(|assets| assets.evidence_metadata.get(&item.evidence_id))
     {
+        details.push(("Evidence ID".to_owned(), metadata.id().to_string()));
+        details.push((
+            "Evidence revision".to_owned(),
+            metadata.revision().get().to_string(),
+        ));
+        details.push(("File name".to_owned(), metadata.file_name().to_owned()));
         details.push(("Type".to_owned(), metadata.media_type().to_owned()));
         if !metadata.description().trim().is_empty() {
             details.push((
@@ -2616,8 +2622,17 @@ fn evidence_index_details(
         if !metadata.source().trim().is_empty() {
             details.push(("Source".to_owned(), metadata.source().trim().to_owned()));
         }
+        if !metadata.source_url().trim().is_empty() {
+            details.push((
+                "Source URL".to_owned(),
+                metadata.source_url().trim().to_owned(),
+            ));
+        }
         if let Some(captured_at) = metadata.captured_at() {
             details.push(("Captured".to_owned(), captured_at.to_owned()));
+        }
+        if !metadata.tags().is_empty() {
+            details.push(("Tags".to_owned(), metadata.tags().join(", ")));
         }
         details.push(("SHA-256".to_owned(), metadata.sha256().to_owned()));
         if !metadata.analyst_notes().trim().is_empty() {
@@ -3002,17 +3017,33 @@ fn section_key(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::io::Cursor;
 
+    use image::{DynamicImage, ImageFormat};
     use sheut_core::{
-        BrandProfile, LocalId, PublicationFormat, PublicationReleaseEntry, PublicationSettings,
-        PublicationSnapshot, PublicationSource, PublicationStatus, Revision,
+        BrandProfile, EvidenceFileMetadata, EvidenceMetadataInput, LocalId, PublicationFormat,
+        PublicationReleaseEntry, PublicationSettings, PublicationSnapshot, PublicationSource,
+        PublicationStatus, Revision,
     };
+    use typst::layout::{Frame, FrameItem};
     use typst_as_lib::TypstEngine;
 
     use super::{
-        GEIST_FONT, GEIST_MONO_FONT, PublicationIr, PublicationSection, SOURCE_SERIF_FONT,
-        TYPST_TEMPLATE, author_label, evidence_image_bounds, fit_image_dimensions, typst_inputs,
+        EvidenceIndexItem, GEIST_FONT, GEIST_MONO_FONT, PublicationAssets, PublicationBlock,
+        PublicationIr, PublicationSection, SOURCE_SERIF_FONT, TYPST_TEMPLATE, author_label,
+        evidence_image_bounds, fit_image_dimensions, typst_inputs,
     };
+
+    fn collect_frame_content(frame: &Frame, text: &mut String, image_count: &mut usize) {
+        for (_, item) in frame.items() {
+            match item {
+                FrameItem::Group(group) => collect_frame_content(&group.frame, text, image_count),
+                FrameItem::Text(item) => text.push_str(&item.text),
+                FrameItem::Image(..) => *image_count += 1,
+                FrameItem::Shape(..) | FrameItem::Link(..) | FrameItem::Tag(..) => {}
+            }
+        }
+    }
 
     #[test]
     fn author_metadata_label_is_singular_or_plural_from_structured_separators() {
@@ -3057,6 +3088,108 @@ mod tests {
     fn typst_template_renders_intentional_paragraph_gaps_as_fixed_space() {
         assert!(TYPST_TEMPLATE.contains("item.kind == \"paragraph-gap\""));
         assert!(TYPST_TEMPLATE.contains("block(height: 8pt)[]"));
+    }
+
+    #[test]
+    fn evidence_index_preview_executes_typst_image_content_instead_of_printing_source() {
+        let evidence_id = LocalId::parse("f8edb3d1-6705-4f64-9260-d7dc888f0512").unwrap();
+        let profile = BrandProfile::project_default(
+            LocalId::parse("110b83fb-9fdb-4133-a29b-e75725bb6d0c").unwrap(),
+            "Example organization",
+            1_000,
+        )
+        .unwrap();
+        let settings = PublicationSettings::from_brand(&profile, PublicationFormat::Pdf);
+        let snapshot = PublicationSnapshot::new(
+            LocalId::parse("ec6ed71e-a754-4b32-b692-50f03f00154f").unwrap(),
+            PublicationSource::FreeformDocument {
+                document_id: LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap(),
+                revision: Revision::new(1).unwrap(),
+            },
+            settings,
+            2_000,
+        )
+        .unwrap();
+        let mut section = PublicationSection::new(
+            "appendix_evidence_details",
+            "Evidence extracts and methodology details",
+        );
+        section.blocks.push(PublicationBlock::EvidenceIndex {
+            items: vec![EvidenceIndexItem {
+                evidence_id,
+                label: "Captured storefront".to_owned(),
+                section_titles: vec!["Assessment".to_owned()],
+                anchor: "evidence-f8edb3d1".to_owned(),
+            }],
+        });
+        let publication = PublicationIr::new(
+            "Evidence report".to_owned(),
+            "Report".to_owned(),
+            BTreeMap::new(),
+            vec![section],
+        )
+        .unwrap();
+        let mut png = Cursor::new(Vec::new());
+        DynamicImage::new_rgb8(32, 18)
+            .write_to(&mut png, ImageFormat::Png)
+            .unwrap();
+        let mut assets = PublicationAssets::default();
+        assets.evidence_images.insert(evidence_id, png.into_inner());
+        assets.evidence_metadata.insert(
+            evidence_id,
+            EvidenceFileMetadata::from_parts(
+                evidence_id,
+                Revision::new(4).unwrap(),
+                "image/png",
+                "storefront.png",
+                1_024,
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                EvidenceMetadataInput::new(
+                    "Captured storefront",
+                    "Landing page before redirect.",
+                    "Analyst capture",
+                    Some("2026-08-04".to_owned()),
+                    "https://evidence.example/storefront",
+                    vec!["phishing".to_owned(), "storefront".to_owned()],
+                    "Preserve the original viewport and redirect chain.",
+                )
+                .unwrap(),
+                1_000,
+                2_000,
+            )
+            .unwrap(),
+        );
+        let engine = TypstEngine::builder()
+            .main_file(TYPST_TEMPLATE)
+            .fonts([GEIST_FONT, GEIST_MONO_FONT, SOURCE_SERIF_FONT])
+            .build();
+        let document = engine
+            .compile_with_input(typst_inputs(
+                &publication,
+                &snapshot,
+                Some(&profile),
+                Some(&assets),
+            ))
+            .output
+            .expect("evidence appendix must compile");
+        typst_pdf::pdf(&document, &Default::default()).unwrap();
+        let mut rendered_text = String::new();
+        let mut image_count = 0;
+        for page in document.pages() {
+            collect_frame_content(&page.frame, &mut rendered_text, &mut image_count);
+        }
+
+        assert!(
+            image_count > 0,
+            "the evidence preview must render an image frame"
+        );
+        assert!(rendered_text.contains("Evidence image"));
+        assert!(rendered_text.contains("ANALYST NOTES"));
+        assert!(rendered_text.contains("Preserve the original viewport and redirect chain."));
+        assert!(rendered_text.contains("Analyst capture"));
+        assert!(rendered_text.contains("0123456789abcdef"));
+        assert!(!rendered_text.contains("entry.bytes"));
+        assert!(!rendered_text.contains("width_mm"));
     }
 
     #[test]
