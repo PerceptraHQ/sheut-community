@@ -346,9 +346,42 @@ describe("DocumentEditor", () => {
       />,
     );
 
+    const toolbar = screen.getByRole("toolbar", { name: "Document toolbar" });
+    const formatting = within(toolbar).getByRole("group", { name: "Document formatting" });
+    const documentActions = within(toolbar).getByRole("group", { name: "Document actions" });
     expect(screen.getAllByRole("toolbar")).toHaveLength(1);
+    expect(within(formatting).getByRole("button", { name: "Undo" })).toBeVisible();
+    expect(within(formatting).getByRole("button", { name: "Redo" })).toBeVisible();
+    expect(within(formatting).getByRole("button", { name: "Insert report content" })).toBeVisible();
+    expect(
+      within(documentActions).getByRole("button", { name: "More document actions" }),
+    ).toBeVisible();
+    expect(within(documentActions).queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(within(documentActions).queryByRole("button", { name: "Redo" })).toBeNull();
+    expect(
+      within(documentActions).queryByRole("button", { name: "Insert report content" }),
+    ).toBeNull();
+    expect(within(formatting).getByRole("group", { name: "Detailed typography" })).toHaveClass(
+      "editor-toolbar-responsive-priority-1",
+    );
+    expect(
+      within(formatting).getByRole("group", { name: "Additional inline formatting" }),
+    ).toHaveClass("editor-toolbar-responsive-priority-2");
+    expect(within(formatting).getByRole("group", { name: "Text alignment" })).toHaveClass(
+      "editor-toolbar-responsive-priority-3",
+    );
     expect(screen.queryByRole("button", { name: "Attach image" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Insert table" })).toBeNull();
+    await user.click(
+      within(documentActions).getByRole("button", { name: "More document actions" }),
+    );
+    const actionsMenu = await screen.findByRole("dialog", { name: "Report" });
+    expect(
+      within(actionsMenu).getByRole("button", { name: "Report administration" }),
+    ).toBeVisible();
+    expect(within(actionsMenu).getByRole("button", { name: "Preview A4 page" })).toBeVisible();
+    expect(within(actionsMenu).getByText(/Add H1–H3 headings/)).toBeVisible();
+    await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Insert report content" }));
     const menu = await screen.findByRole("dialog", { name: "Insert report content" });
     for (const label of ["Evidence", "Image", "Table", /Page break/]) {
@@ -495,8 +528,8 @@ describe("DocumentEditor", () => {
     await user.click(
       await screen.findByRole("option", { name: "TLP:AMBER+STRICT — Organization only" }),
     );
-    expect(screen.getByText("Included sections")).toBeVisible();
-    expect(screen.getByText("Included appendices")).toBeVisible();
+    expect(screen.queryByText("Included sections")).toBeNull();
+    expect(screen.queryByText("Included appendices")).toBeNull();
     await user.click(screen.getByRole("switch", { name: "Include footer" }));
     await user.clear(fileName);
     await user.type(fileName, "incident-summary");
@@ -514,7 +547,7 @@ describe("DocumentEditor", () => {
       includeReleaseHistory: false,
       changeNote: null,
       pageFurniture: { header: true, footer: false, marking: true, page_numbers: true },
-      includedSections: ["document"],
+      includedSections: [],
       appendices: [],
       fileName: "incident-summary",
     });

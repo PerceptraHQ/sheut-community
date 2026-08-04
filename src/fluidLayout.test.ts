@@ -67,11 +67,14 @@ describe("fluid application shell", () => {
 
   it("expands advanced formatting inside the single toolbar row", () => {
     expect(appCss).toMatch(
-      /data-more-formatting-open[^}]*\.editor-toolbar-formatting\s*>\s*:not\([^}]*display:\s*none;/su,
+      /data-more-formatting-open[^}]*\.editor-toolbar-formatting\s*\{[^}]*overflow-x:\s*auto;/su,
     );
     expect(appCss).toMatch(
-      /data-more-formatting-open[^}]*\.editor-toolbar-overflow-priority\s*\{[^}]*position:\s*static;[^}]*flex-wrap:\s*nowrap;[^}]*overflow-x:\s*auto;/su,
+      /data-more-formatting-open[^}]*\.editor-toolbar-responsive-priority-1,[\s\S]*?display:\s*flex;/su,
     );
+    expect(appCss).toContain("container-name: document-toolbar");
+    expect(appCss).toContain("@container document-toolbar (min-width: 68rem)");
+    expect(appCss).toContain("@container document-toolbar (min-width: 106rem)");
   });
 
   it("removes the redundant command-row gap from the document workspace", () => {

@@ -13,7 +13,7 @@ export function ReportHelpGuides({ initialTopic }: ReportHelpGuidesProps) {
       <h3 className="m-0 text-lg font-semibold">Document-native reports</h3>
       <p className="mt-2 text-copy-muted text-sm leading-6">
         Reports are blank, revisioned documents. Set the report ID, title, authors, producing
-        organisation, and issue date in Report properties, then write the body directly in the
+        organisation, and issue date in Report administration, then write the body directly in the
         editor.
       </p>
       <h4 className="mt-6 mb-2 text-sm font-semibold">Structure and pages</h4>

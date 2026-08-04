@@ -21,7 +21,6 @@ import {
   IconDeviceFloppy,
   IconDots,
   IconFileExport,
-  IconFileText,
   IconH1,
   IconH2,
   IconH3,
@@ -35,6 +34,7 @@ import {
   IconListTree,
   IconPhotoPlus,
   IconPilcrow,
+  IconPlus,
   IconRowInsertBottom,
   IconRowInsertTop,
   IconRowRemove,
@@ -204,170 +204,14 @@ export function DocumentToolbar({
               <IconDeviceFloppy size={15} stroke={1.7} aria-hidden="true" />
               <span>Save</span>
             </ToolbarButton>
-            <ToolbarButton label="Undo" onClick={() => editor.chain().focus().undo().run()}>
-              <IconArrowBackUp size={15} stroke={1.7} aria-hidden="true" />
-            </ToolbarButton>
-            <ToolbarButton label="Redo" onClick={() => editor.chain().focus().redo().run()}>
-              <IconArrowForwardUp size={15} stroke={1.7} aria-hidden="true" />
-            </ToolbarButton>
-            {reportTitle && onOpenReportProperties ? (
-              <ToolbarButton label="Report properties" wide onClick={onOpenReportProperties}>
-                <IconSettings size={15} stroke={1.7} aria-hidden="true" />
-                <span>Properties</span>
-              </ToolbarButton>
-            ) : null}
-            {reportTitle && onInsertPageBreak ? (
-              <Popover.Root>
-                <Popover.Trigger
-                  render={
-                    <Toolbar.Button
-                      className="editor-toolbar-button editor-toolbar-button-wide"
-                      type="button"
-                    />
-                  }
-                  aria-label="Insert report content"
-                >
-                  <IconFileText size={15} stroke={1.7} aria-hidden="true" />
-                  <span>Insert</span>
-                </Popover.Trigger>
-                <Popover.Portal>
-                  <Popover.Positioner align="start" className="z-50" sideOffset={5}>
-                    <Popover.Popup
-                      className="report-outline-popup"
-                      aria-label="Insert report content"
-                    >
-                      {onInsertEvidence ? (
-                        <Popover.Close
-                          render={<Button className="report-outline-entry" type="button" />}
-                          onClick={onInsertEvidence}
-                        >
-                          Evidence
-                        </Popover.Close>
-                      ) : null}
-                      {onInsertProjectData ? (
-                        <Popover.Close
-                          render={<Button className="report-outline-entry" type="button" />}
-                          onClick={onInsertProjectData}
-                        >
-                          Project data
-                        </Popover.Close>
-                      ) : null}
-                      {onInsertMitre ? (
-                        <Popover.Close
-                          render={<Button className="report-outline-entry" type="button" />}
-                          onClick={onInsertMitre}
-                        >
-                          MITRE observations
-                        </Popover.Close>
-                      ) : null}
-                      {onInsertGraph ? (
-                        <Popover.Close
-                          render={<Button className="report-outline-entry" type="button" />}
-                          onClick={onInsertGraph}
-                        >
-                          Graph snapshot
-                        </Popover.Close>
-                      ) : null}
-                      <Popover.Close
-                        render={<Button className="report-outline-entry" type="button" />}
-                        onClick={onInsertImage}
-                      >
-                        Image
-                      </Popover.Close>
-                      <Popover.Close
-                        render={<Button className="report-outline-entry" type="button" />}
-                        onClick={() =>
-                          editor
-                            .chain()
-                            .focus()
-                            .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
-                            .run()
-                        }
-                      >
-                        Table
-                      </Popover.Close>
-                      <Popover.Close
-                        render={<Button className="report-outline-entry" type="button" />}
-                        onClick={onInsertPageBreak}
-                      >
-                        Page break <span className="ml-auto text-copy-faint">⌘↵</span>
-                      </Popover.Close>
-                    </Popover.Popup>
-                  </Popover.Positioner>
-                </Popover.Portal>
-              </Popover.Root>
-            ) : null}
-            {reportTitle ? (
-              <Popover.Root>
-                <Popover.Trigger
-                  render={
-                    <Toolbar.Button
-                      className="editor-toolbar-button editor-toolbar-button-wide"
-                      type="button"
-                    />
-                  }
-                  aria-label="Report outline"
-                >
-                  <IconListTree size={15} stroke={1.7} aria-hidden="true" />
-                  <span>Outline</span>
-                </Popover.Trigger>
-                <Popover.Portal>
-                  <Popover.Positioner align="end" className="z-50" sideOffset={5}>
-                    <Popover.Popup className="report-outline-popup" aria-label="Report outline">
-                      <Popover.Title className="report-outline-title">
-                        Document outline
-                      </Popover.Title>
-                      {outline.length === 0 ? (
-                        <p className="report-outline-empty">
-                          Add H1–H3 headings to build the outline and PDF contents.
-                        </p>
-                      ) : (
-                        outline.map((entry) => (
-                          <Popover.Close
-                            key={`${entry.position}:${entry.title}`}
-                            render={<Button className="report-outline-entry" type="button" />}
-                            data-level={entry.level}
-                            onClick={() => onSelectOutline?.(entry.position)}
-                          >
-                            {entry.title}
-                          </Popover.Close>
-                        ))
-                      )}
-                    </Popover.Popup>
-                  </Popover.Positioner>
-                </Popover.Portal>
-              </Popover.Root>
-            ) : null}
-            {reportTitle && onPreviewPaperSizeChange ? (
-              <Popover.Root>
-                <Popover.Trigger
-                  render={
-                    <Toolbar.Button
-                      className="editor-toolbar-button editor-toolbar-button-wide"
-                      type="button"
-                    />
-                  }
-                  aria-label="Page preview size"
-                >
-                  <span>Page · {previewPaperSize.toUpperCase()}</span>
-                </Popover.Trigger>
-                <Popover.Portal>
-                  <Popover.Positioner align="end" className="z-50" sideOffset={5}>
-                    <Popover.Popup className="report-outline-popup" aria-label="Page preview size">
-                      {(["a4", "letter"] as const).map((size) => (
-                        <Popover.Close
-                          key={size}
-                          render={<Button className="report-outline-entry" type="button" />}
-                          aria-current={previewPaperSize === size ? "true" : undefined}
-                          onClick={() => onPreviewPaperSizeChange(size)}
-                        >
-                          {size === "a4" ? "A4 · 210 × 297 mm" : "Letter · 8.5 × 11 in"}
-                        </Popover.Close>
-                      ))}
-                    </Popover.Popup>
-                  </Popover.Positioner>
-                </Popover.Portal>
-              </Popover.Root>
+            {reportTitle && onOpenReportProperties && onPreviewPaperSizeChange ? (
+              <ReportActionsMenu
+                outline={outline}
+                previewPaperSize={previewPaperSize}
+                onOpenReportProperties={onOpenReportProperties}
+                onPreviewPaperSizeChange={onPreviewPaperSizeChange}
+                onSelectOutline={onSelectOutline}
+              />
             ) : null}
             <ToolbarButton
               label={reportTitle ? "Publish report" : "Export document"}
@@ -386,6 +230,26 @@ export function DocumentToolbar({
             {saveState === "error" ? "Not saved" : null}
           </span>
           <Toolbar.Group className="editor-toolbar-formatting" aria-label="Document formatting">
+            <Toolbar.Group className="editor-toolbar-group" aria-label="Editing actions">
+              <ToolbarButton label="Undo" onClick={() => editor.chain().focus().undo().run()}>
+                <IconArrowBackUp size={15} stroke={1.7} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarButton label="Redo" onClick={() => editor.chain().focus().redo().run()}>
+                <IconArrowForwardUp size={15} stroke={1.7} aria-hidden="true" />
+              </ToolbarButton>
+              {reportTitle && onInsertPageBreak ? (
+                <ReportInsertMenu
+                  editor={editor}
+                  onInsertEvidence={onInsertEvidence}
+                  onInsertProjectData={onInsertProjectData}
+                  onInsertMitre={onInsertMitre}
+                  onInsertGraph={onInsertGraph}
+                  onInsertImage={onInsertImage}
+                  onInsertPageBreak={onInsertPageBreak}
+                />
+              ) : null}
+            </Toolbar.Group>
+            <ToolbarSeparator />
             {reportTitle ? (
               <Toolbar.Group className="editor-toolbar-group" aria-label="Typography formatting">
                 <FormattingPopover
@@ -491,7 +355,10 @@ export function DocumentToolbar({
               aria-label="Additional formatting controls"
             >
               {reportTitle ? (
-                <Toolbar.Group className="editor-toolbar-group" aria-label="Detailed typography">
+                <Toolbar.Group
+                  className="editor-toolbar-group editor-toolbar-responsive-priority-1"
+                  aria-label="Detailed typography"
+                >
                   <FormattingPopover
                     label="Text color"
                     value="Color"
@@ -526,8 +393,13 @@ export function DocumentToolbar({
                   />
                 </Toolbar.Group>
               ) : null}
-              <ToolbarSeparator />
-              <Toolbar.Group className="editor-toolbar-group" aria-label="Document content">
+              {reportTitle ? (
+                <ToolbarSeparator className="editor-toolbar-responsive-priority-1" />
+              ) : null}
+              <Toolbar.Group
+                className="editor-toolbar-group editor-toolbar-responsive-priority-1"
+                aria-label="Document content"
+              >
                 <ToolbarButton
                   label="Add or edit link"
                   active={state.link}
@@ -546,17 +418,22 @@ export function DocumentToolbar({
                   </ToolbarButton>
                 ) : null}
               </Toolbar.Group>
-              <ToolbarSeparator />
-              <ToolbarButton
-                label="Defang selection"
-                disabled={state.selectionEmpty}
-                onClick={handleDefang}
-              >
-                <IconShieldCheck size={15} stroke={1.7} aria-hidden="true" />
-              </ToolbarButton>
-              <ToolbarSeparator />
+              <ToolbarSeparator className="editor-toolbar-responsive-priority-1" />
               <Toolbar.Group
-                className="editor-toolbar-group"
+                className="editor-toolbar-group editor-toolbar-responsive-priority-1"
+                aria-label="Threat indicator formatting"
+              >
+                <ToolbarButton
+                  label="Defang selection"
+                  disabled={state.selectionEmpty}
+                  onClick={handleDefang}
+                >
+                  <IconShieldCheck size={15} stroke={1.7} aria-hidden="true" />
+                </ToolbarButton>
+              </Toolbar.Group>
+              <ToolbarSeparator className="editor-toolbar-responsive-priority-2" />
+              <Toolbar.Group
+                className="editor-toolbar-group editor-toolbar-responsive-priority-2"
                 aria-label="Additional inline formatting"
               >
                 <ToolbarButton
@@ -595,9 +472,9 @@ export function DocumentToolbar({
                   <IconSuperscript size={15} stroke={1.7} aria-hidden="true" />
                 </ToolbarButton>
               </Toolbar.Group>
-              <ToolbarSeparator />
+              <ToolbarSeparator className="editor-toolbar-responsive-priority-3" />
               <ToggleGroup
-                className="editor-toolbar-group"
+                className="editor-toolbar-group editor-toolbar-responsive-priority-3"
                 aria-label="Text alignment"
                 value={alignmentValue}
                 onValueChange={(value) => {
@@ -618,8 +495,11 @@ export function DocumentToolbar({
                   <IconAlignJustified size={15} stroke={1.7} aria-hidden="true" />
                 </ToolbarButton>
               </ToggleGroup>
-              <ToolbarSeparator />
-              <Toolbar.Group className="editor-toolbar-group" aria-label="Block formatting">
+              <ToolbarSeparator className="editor-toolbar-responsive-priority-3" />
+              <Toolbar.Group
+                className="editor-toolbar-group editor-toolbar-responsive-priority-3"
+                aria-label="Block formatting"
+              >
                 <ToolbarButton
                   label="Bullet list"
                   active={state.bulletList}
@@ -662,9 +542,9 @@ export function DocumentToolbar({
                   <IconSeparatorHorizontal size={15} stroke={1.7} aria-hidden="true" />
                 </ToolbarButton>
               </Toolbar.Group>
-              <ToolbarSeparator />
+              <ToolbarSeparator className="editor-toolbar-responsive-priority-3" />
               <Toolbar.Group
-                className="editor-toolbar-group"
+                className="editor-toolbar-group editor-toolbar-responsive-priority-3"
                 aria-label="Additional document content"
               >
                 <ToolbarButton
@@ -795,6 +675,180 @@ export function DocumentToolbar({
   );
 }
 
+function ReportInsertMenu({
+  editor,
+  onInsertEvidence,
+  onInsertProjectData,
+  onInsertMitre,
+  onInsertGraph,
+  onInsertImage,
+  onInsertPageBreak,
+}: {
+  editor: Editor;
+  onInsertEvidence?: () => void;
+  onInsertProjectData?: () => void;
+  onInsertMitre?: () => void;
+  onInsertGraph?: () => void;
+  onInsertImage: () => void;
+  onInsertPageBreak: () => void;
+}) {
+  return (
+    <Popover.Root>
+      <Popover.Trigger
+        render={
+          <Toolbar.Button
+            className="editor-toolbar-button"
+            type="button"
+            title="Insert report content"
+          />
+        }
+        aria-label="Insert report content"
+      >
+        <IconPlus size={16} stroke={1.9} aria-hidden="true" />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner align="start" className="z-50" sideOffset={5}>
+          <Popover.Popup className="report-outline-popup" aria-label="Insert report content">
+            {onInsertEvidence ? (
+              <Popover.Close
+                render={<Button className="report-outline-entry" type="button" />}
+                onClick={onInsertEvidence}
+              >
+                Evidence
+              </Popover.Close>
+            ) : null}
+            {onInsertProjectData ? (
+              <Popover.Close
+                render={<Button className="report-outline-entry" type="button" />}
+                onClick={onInsertProjectData}
+              >
+                Project data
+              </Popover.Close>
+            ) : null}
+            {onInsertMitre ? (
+              <Popover.Close
+                render={<Button className="report-outline-entry" type="button" />}
+                onClick={onInsertMitre}
+              >
+                MITRE observations
+              </Popover.Close>
+            ) : null}
+            {onInsertGraph ? (
+              <Popover.Close
+                render={<Button className="report-outline-entry" type="button" />}
+                onClick={onInsertGraph}
+              >
+                Graph snapshot
+              </Popover.Close>
+            ) : null}
+            <Popover.Close
+              render={<Button className="report-outline-entry" type="button" />}
+              onClick={onInsertImage}
+            >
+              Image
+            </Popover.Close>
+            <Popover.Close
+              render={<Button className="report-outline-entry" type="button" />}
+              onClick={() =>
+                editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+              }
+            >
+              Table
+            </Popover.Close>
+            <Popover.Close
+              render={<Button className="report-outline-entry" type="button" />}
+              onClick={onInsertPageBreak}
+            >
+              Page break <span className="ml-auto text-copy-faint">⌘↵</span>
+            </Popover.Close>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+function ReportActionsMenu({
+  outline,
+  previewPaperSize,
+  onOpenReportProperties,
+  onPreviewPaperSizeChange,
+  onSelectOutline,
+}: {
+  outline: readonly ReportOutlineEntry[];
+  previewPaperSize: "a4" | "letter";
+  onOpenReportProperties: () => void;
+  onPreviewPaperSizeChange: (size: "a4" | "letter") => void;
+  onSelectOutline?: (position: number) => void;
+}) {
+  return (
+    <Popover.Root>
+      <Popover.Trigger
+        render={
+          <Toolbar.Button
+            className="editor-toolbar-button"
+            type="button"
+            title="More document actions"
+          />
+        }
+        aria-label="More document actions"
+      >
+        <IconDots size={16} stroke={1.8} aria-hidden="true" />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner align="end" className="z-50" sideOffset={5}>
+          <Popover.Popup className="report-outline-popup" aria-label="More document actions">
+            <Popover.Title className="report-outline-title">Report</Popover.Title>
+            <Popover.Close
+              render={<Button className="report-outline-entry" type="button" />}
+              aria-label="Report administration"
+              onClick={onOpenReportProperties}
+            >
+              <IconSettings size={15} stroke={1.7} aria-hidden="true" />
+              <span className="ml-2">Report administration</span>
+            </Popover.Close>
+            <div className="report-outline-section-label">Page preview</div>
+            {(["a4", "letter"] as const).map((size) => (
+              <Popover.Close
+                key={size}
+                render={<Button className="report-outline-entry" type="button" />}
+                aria-label={`Preview ${size === "a4" ? "A4" : "Letter"} page`}
+                aria-current={previewPaperSize === size ? "true" : undefined}
+                onClick={() => onPreviewPaperSizeChange(size)}
+              >
+                <span aria-hidden="true">{previewPaperSize === size ? "✓" : ""}</span>
+                <span className="ml-2">
+                  {size === "a4" ? "A4 · 210 × 297 mm" : "Letter · 8.5 × 11 in"}
+                </span>
+              </Popover.Close>
+            ))}
+            <div className="report-outline-section-label">
+              <IconListTree size={14} stroke={1.7} aria-hidden="true" />
+              <span>Outline</span>
+            </div>
+            {outline.length === 0 ? (
+              <p className="report-outline-empty">
+                Add H1–H3 headings to build the outline and PDF contents.
+              </p>
+            ) : (
+              outline.map((entry) => (
+                <Popover.Close
+                  key={`${entry.position}:${entry.title}`}
+                  render={<Button className="report-outline-entry" type="button" />}
+                  data-level={entry.level}
+                  onClick={() => onSelectOutline?.(entry.position)}
+                >
+                  {entry.title}
+                </Popover.Close>
+              ))
+            )}
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 function selectedTableRequiresLandscape(editor: Editor): boolean {
   const $from = editor.state.selection.$from;
   if (!$from) return false;
@@ -899,8 +953,12 @@ function ToolbarTooltipPopup({ label }: { label: string }) {
   );
 }
 
-function ToolbarSeparator() {
-  return <Toolbar.Separator className="editor-toolbar-separator" />;
+function ToolbarSeparator({ className }: { className?: string } = {}) {
+  return (
+    <Toolbar.Separator
+      className={className ? `editor-toolbar-separator ${className}` : "editor-toolbar-separator"}
+    />
+  );
 }
 
 interface FormattingOption<T extends string | number> {

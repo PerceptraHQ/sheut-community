@@ -14,7 +14,8 @@ use image::ImageReader;
 use serde_json::Value as JsonValue;
 use sheut_core::{
     BrandProfile, BrandTypeface, CoverTreatment, DocumentEnvelope, EvidenceFileMetadata,
-    ImageMediaType, LocalId, PageOrientation, PublicationSnapshot, render_document,
+    ImageMediaType, LocalId, PageOrientation, PublicationSnapshot, PublicationStatus,
+    render_document,
 };
 use typst::foundations::{Bytes, Dict, IntoValue, Smart};
 use typst_as_lib::TypstEngine;
@@ -95,6 +96,13 @@ fn author_label(authors: &str) -> &'static str {
         ""
     } else {
         "Author"
+    }
+}
+
+const fn publication_status_label(status: PublicationStatus) -> &'static str {
+    match status {
+        PublicationStatus::Draft => "Draft",
+        PublicationStatus::Final => "Final",
     }
 }
 
@@ -545,10 +553,11 @@ const TYPST_TEMPLATE: &str = r##"
 
 #let running-top = context block(width: 100%)[
   #grid(
-    columns: (1fr, auto),
-    align: (left + horizon, right + horizon),
+    columns: (1fr, auto, 1fr),
+    align: (left + horizon, center + horizon, right + horizon),
     text(font: inputs.heading_font, size: 7.3pt, weight: 550, report-number),
-    tlp-badge,
+    align(center + horizon)[#tlp-badge],
+    [],
   )
   #v(5pt)
   #line(length: 100%, stroke: 0.55pt + ink)
@@ -1005,8 +1014,14 @@ impl PublicationIr {
                     snapshot.release_version(),
                     Some("Authors or producing organisation"),
                 );
+                upsert_metadata_row(
+                    rows,
+                    "Status",
+                    publication_status_label(snapshot.publication_status()),
+                    Some("Version"),
+                );
                 if let Some(marking) = snapshot.tlp_marking() {
-                    upsert_metadata_row(rows, "Handling marking", marking.label(), Some("Version"));
+                    upsert_metadata_row(rows, "Handling marking", marking.label(), Some("Status"));
                 }
                 return Self {
                     title: self.title.clone(),
@@ -1025,10 +1040,16 @@ impl PublicationIr {
                     )
                 })
                 .map_or(administration.blocks.len(), |index| index.saturating_add(1));
-            let mut snapshot_values = vec![PublicationBlock::LabeledText {
-                label: "Version".to_owned(),
-                text: snapshot.release_version().to_owned(),
-            }];
+            let mut snapshot_values = vec![
+                PublicationBlock::LabeledText {
+                    label: "Version".to_owned(),
+                    text: snapshot.release_version().to_owned(),
+                },
+                PublicationBlock::LabeledText {
+                    label: "Status".to_owned(),
+                    text: publication_status_label(snapshot.publication_status()).to_owned(),
+                },
+            ];
             if let Some(marking) = snapshot.tlp_marking() {
                 snapshot_values.push(PublicationBlock::LabeledText {
                     label: "Handling marking".to_owned(),
@@ -3104,6 +3125,48 @@ mod tests {
     }
 
     #[test]
+    fn report_administration_includes_release_status_from_publication_snapshot() {
+        let profile = BrandProfile::project_default(
+            LocalId::parse("110b83fb-9fdb-4133-a29b-e75725bb6d0c").unwrap(),
+            "Example organization",
+            1_000,
+        )
+        .unwrap();
+        let settings = PublicationSettings::from_brand(&profile, PublicationFormat::Pdf)
+            .with_release("2.0", PublicationStatus::Final, false, Vec::new())
+            .unwrap();
+        let snapshot = PublicationSnapshot::new(
+            LocalId::parse("ec6ed71e-a754-4b32-b692-50f03f00154f").unwrap(),
+            PublicationSource::FreeformDocument {
+                document_id: LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap(),
+                revision: Revision::new(1).unwrap(),
+            },
+            settings,
+            2_000,
+        )
+        .unwrap();
+        let mut administration =
+            PublicationSection::new("report_administration", "Report administration");
+        administration.blocks.push(PublicationBlock::MetadataTable {
+            rows: vec![("Report ID".to_owned(), "RPT-0042".to_owned())],
+        });
+        let publication = PublicationIr::new(
+            "Example report".to_owned(),
+            "Report".to_owned(),
+            BTreeMap::new(),
+            vec![administration],
+        )
+        .unwrap()
+        .selected_for(&snapshot);
+
+        let PublicationBlock::MetadataTable { rows } = &publication.sections[0].blocks[0] else {
+            panic!("report administration must remain a metadata table");
+        };
+        assert!(rows.contains(&("Version".to_owned(), "2.0".to_owned())));
+        assert!(rows.contains(&("Status".to_owned(), "Final".to_owned())));
+    }
+
+    #[test]
     fn evidence_image_bounds_reserve_caption_space_inside_each_page_orientation() {
         let portrait = evidence_image_bounds(11_906, 16_838);
         let landscape = evidence_image_bounds(16_838, 11_906);
@@ -3145,6 +3208,15 @@ mod tests {
         assert!(
             TYPST_TEMPLATE.contains("render-document-table(item)\n      pagebreak(weak: true)")
         );
+    }
+
+    #[test]
+    fn running_header_centers_tlp_handling_in_the_furniture_band() {
+        assert!(TYPST_TEMPLATE.contains("columns: (1fr, auto, 1fr)"));
+        assert!(
+            TYPST_TEMPLATE.contains("align: (left + horizon, center + horizon, right + horizon)")
+        );
+        assert!(TYPST_TEMPLATE.contains("align(center + horizon)[#tlp-badge]"));
     }
 
     #[test]

@@ -76,12 +76,20 @@ export function ReportPropertiesDialog({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <DialogFrame width="publication">
         <header className="flex h-11 items-center justify-between border-panel-border border-b px-4">
-          <Dialog.Title className="m-0 text-sm font-semibold">Report properties</Dialog.Title>
+          <Dialog.Title className="m-0 text-sm font-semibold">Report administration</Dialog.Title>
           <Dialog.Close render={<Button className="icon-control" />} aria-label="Close">
             <IconX size={16} aria-hidden="true" />
           </Dialog.Close>
         </header>
         <form className="grid gap-4 p-4" onSubmit={submit}>
+          <div className="rounded-sm border border-panel-border bg-panel-deep p-3 text-copy-muted text-xs leading-5">
+            <p className="m-0">
+              These values generate the PDF cover and Report administration page.
+            </p>
+            <p className="mt-1 mb-0 text-copy-faint">
+              Version, status, TLP, and release history are set when you Publish.
+            </p>
+          </div>
           <div className="grid gap-1.5">
             <span className="text-copy-secondary text-xs font-semibold">Report ID</span>
             <code className="text-copy-secondary text-sm">{properties.reportId}</code>
@@ -187,7 +195,7 @@ export function ReportPropertiesDialog({
               Cancel
             </Dialog.Close>
             <Button className="primary-button" type="submit">
-              Save properties
+              Save administration
             </Button>
           </footer>
         </form>

@@ -19,6 +19,12 @@ describe("ReportPropertiesDialog", () => {
       />,
     );
 
+    expect(screen.getByRole("dialog", { name: "Report administration" })).toBeVisible();
+    expect(
+      screen.getByText(/generate the PDF cover and Report administration page/i),
+    ).toBeVisible();
+    expect(screen.getByText(/Version, status, TLP, and release history/i)).toBeVisible();
+
     for (const input of [
       screen.getByLabelText("Title"),
       screen.getByLabelText("Producing organisation"),

@@ -20,7 +20,6 @@ import {
   documentTitle,
   loadDocumentImage,
   pickDocumentImage,
-  publicationSelectionsFromRoots,
   type ReportProperties,
   saveDocument,
 } from "../lib/documents";
@@ -108,10 +107,6 @@ export default function DocumentEditor({
   const [outline, setOutline] = useState<ReportOutlineEntry[]>([]);
   const [previewPaperSize, setPreviewPaperSize] = useState<"a4" | "letter">("a4");
   const isReport = document.kind === "report";
-  const publicationSelections = useMemo(
-    () => publicationSelectionsFromRoots([document.root]),
-    [document.root],
-  );
 
   const intelligenceExtensions = useMemo(
     () =>
@@ -651,8 +646,6 @@ export default function DocumentEditor({
           open={exportDialogOpen}
           projectId={projectId}
           sourceId={document.id}
-          sections={publicationSelections.sections}
-          appendices={publicationSelections.appendices}
           title={isReport ? "Publish report" : "Publish document"}
         />
       ) : null}

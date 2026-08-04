@@ -505,8 +505,13 @@ describe("App", () => {
     const workspaceTabs = await screen.findByRole("navigation", { name: "Workspace tabs" });
     expect(
       await within(workspaceTabs).findByRole("button", { name: "New Analyst Note" }),
-    ).toBeVisible();
-    expect(within(workspaceTabs).getByRole("button", { name: "New Investigation" })).toBeVisible();
+    ).toHaveTextContent("+ Analyst Note");
+    expect(
+      within(workspaceTabs).getByRole("button", { name: "New Investigation" }),
+    ).toHaveTextContent("+ Investigation");
+    expect(within(workspaceTabs).getByRole("button", { name: "New Report" })).toHaveTextContent(
+      "+ Report",
+    );
     await user.click(within(workspaceTabs).getByRole("button", { name: "Quick Note" }));
     expect((await screen.findAllByText("Untitled analyst note")).length).toBeGreaterThan(0);
 

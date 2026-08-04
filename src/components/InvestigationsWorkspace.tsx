@@ -311,21 +311,25 @@ export function InvestigationsWorkspace({
         <legend className="sr-only">Create document</legend>
         <CreateAction
           label="Quick Note"
+          displayLabel="Quick Note"
           disabled={creating || editorBusy}
           onClick={() => void handleCreate("analyst_note")}
         />
         <CreateAction
           label="New Investigation"
+          displayLabel="Investigation"
           disabled={creating || editorBusy}
           onClick={() => void handleCreate("investigation")}
         />
         <CreateAction
           label="New Analyst Note"
+          displayLabel="Analyst Note"
           disabled={creating || editorBusy}
           onClick={() => void handleCreate("analyst_note")}
         />
         <CreateAction
           label="New Report"
+          displayLabel="Report"
           disabled={creating || editorBusy}
           onClick={() => void handleCreate("report")}
         />
@@ -463,10 +467,12 @@ export function InvestigationsWorkspace({
 
 function CreateAction({
   label,
+  displayLabel,
   disabled,
   onClick,
 }: {
   label: string;
+  displayLabel: string;
   disabled: boolean;
   onClick: () => void;
 }) {
@@ -479,7 +485,7 @@ function CreateAction({
       aria-label={label}
       title={label}
     >
-      + {label.replace(/^New /, "")}
+      + {displayLabel}
     </Button>
   );
 }
