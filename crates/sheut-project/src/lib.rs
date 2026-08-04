@@ -4,7 +4,7 @@
 //! This crate resolves opaque local identifiers to project paths; UI callers never provide them.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     error::Error,
     fmt, fs,
     fs::OpenOptions,
@@ -22,16 +22,14 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use sheut_core::{
     AnalyticConfidence, BrandAssetMetadata, BrandAssetRole, BrandProfile, BrandProfileInput,
-    BuiltinReportTemplate, DocumentActivityEntry, DocumentEnvelope, DocumentKind,
-    DocumentRevisionDiff, DocumentRevisionSummary, DocumentTextDiffKind, DocumentTextDiffSegment,
-    DomainErrorCode, EvidenceFileMetadata, EvidenceMetadataInput, GraphViewport, GraphWorkspace,
-    GraphWorkspaceSnapshot, GuidedReport, GuidedReportFieldValue, ImageAttachmentMetadata,
-    ImageMediaType, LocalId, MAX_GRAPH_WORKSPACE_ITEMS, MitreTechniqueReference, Position,
-    ProjectMetadata, PublicationRecord, ReportReadinessWarning, ReportSectionDisposition,
-    ReportTemplateDefinition, ReportTemplateSection, Revision, SemanticRelationshipDraft,
-    TechniqueAssessment, TechniqueObservation, TechniqueOutcome, TlpMarking, VisualLink,
-    WorkspaceItem, WorkspaceItemKind, WorkspaceMode, detect_evidence_media_type, render_document,
-    report_template_catalog, report_template_revision,
+    DocumentActivityEntry, DocumentEnvelope, DocumentKind, DocumentRevisionDiff,
+    DocumentRevisionSummary, DocumentTextDiffKind, DocumentTextDiffSegment, DomainErrorCode,
+    EvidenceFileMetadata, EvidenceMetadataInput, GraphViewport, GraphWorkspace,
+    GraphWorkspaceSnapshot, ImageAttachmentMetadata, ImageMediaType, LocalId,
+    MAX_GRAPH_WORKSPACE_ITEMS, MitreTechniqueReference, Position, ProjectMetadata,
+    PublicationRecord, ReportProperties, Revision, SemanticRelationshipDraft, TechniqueAssessment,
+    TechniqueObservation, TechniqueOutcome, TlpMarking, VisualLink, WorkspaceItem,
+    WorkspaceItemKind, WorkspaceMode, detect_evidence_media_type, document_plain_text,
 };
 use sheut_mitre::{
     CatalogSnapshot, MAX_MAPPING_OBSERVATIONS, MitreCatalogError, MitreCatalogErrorCode,
@@ -793,20 +791,30 @@ impl<K: ProjectKeyStore> ProjectManager<K> {
         kind: DocumentKind,
         now_unix_ms: i64,
     ) -> Result<DocumentEnvelope, LifecycleError> {
-        if kind == DocumentKind::Report {
-            return Err(LifecycleError::new(LifecycleErrorCode::InvalidDocument));
-        }
-        let document = DocumentEnvelope::new(
-            LocalId::from_uuid(Uuid::new_v4()),
-            kind,
-            Revision::new(1).map_err(map_domain_error)?,
-            default_document_root(kind),
-        )
-        .map_err(map_domain_error)?;
         let session = self
             .sessions
             .get_mut(&project_id)
             .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
+        let id = LocalId::from_uuid(Uuid::new_v4());
+        let revision = Revision::new(1).map_err(map_domain_error)?;
+        let document = if kind == DocumentKind::Report {
+            let sequence = session
+                .store
+                .reserve_report_number("RPT", 1)
+                .map_err(map_store_error)?;
+            let properties = ReportProperties::new(
+                format!("RPT-{sequence:04}"),
+                "Untitled report",
+                Vec::new(),
+                None,
+                iso_date_from_unix_ms(now_unix_ms)?.as_str(),
+            )
+            .map_err(map_domain_error)?;
+            DocumentEnvelope::new_report(id, revision, default_document_root(kind), properties)
+        } else {
+            DocumentEnvelope::new(id, kind, revision, default_document_root(kind))
+        }
+        .map_err(map_domain_error)?;
         session
             .store
             .save_document_at(&document, None, now_unix_ms)
@@ -824,399 +832,12 @@ impl<K: ProjectKeyStore> ProjectManager<K> {
             .sessions
             .get_mut(&project_id)
             .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let documents = session
-            .store
-            .list_documents()
-            .map_err(map_store_error)?
-            .into_iter()
-            .filter(|document| document.kind() != DocumentKind::Report)
-            .collect();
+        let mut documents = session.store.list_documents().map_err(map_store_error)?;
+        for document in &mut documents {
+            *document = promote_legacy_report(&mut session.store, document.clone(), now_unix_ms)?;
+        }
         session.last_active_unix_ms = now_unix_ms;
         Ok(documents)
-    }
-
-    pub fn list_report_templates(
-        &mut self,
-        project_id: LocalId,
-        now_unix_ms: i64,
-    ) -> Result<Vec<ReportTemplateDefinition>, LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let mut templates = report_template_catalog();
-        for template in session
-            .store
-            .list_report_templates()
-            .map_err(map_store_error)?
-        {
-            if !templates
-                .iter()
-                .any(|existing| existing.id() == template.id())
-            {
-                templates.push(template);
-            }
-        }
-        for report in session
-            .store
-            .list_guided_reports()
-            .map_err(map_store_error)?
-        {
-            if templates.iter().any(|template| {
-                template.id() == report.template_id()
-                    && template.revision() == report.template_revision()
-            }) {
-                continue;
-            }
-            if let Some(template) =
-                report_template_revision(report.template_id(), report.template_revision())
-            {
-                templates.push(template);
-            }
-        }
-        session.last_active_unix_ms = now_unix_ms;
-        Ok(templates)
-    }
-
-    pub fn list_guided_reports(
-        &mut self,
-        project_id: LocalId,
-        now_unix_ms: i64,
-    ) -> Result<Vec<GuidedReport>, LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let reports = session
-            .store
-            .list_guided_reports()
-            .map_err(map_store_error)?;
-        session.last_active_unix_ms = now_unix_ms;
-        Ok(reports)
-    }
-
-    pub fn create_custom_report_template(
-        &mut self,
-        project_id: LocalId,
-        base_template_id: LocalId,
-        name: &str,
-        description: &str,
-        additional_sections: Vec<ReportTemplateSection>,
-        now_unix_ms: i64,
-    ) -> Result<ReportTemplateDefinition, LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let base = if let Some(template) = report_template_catalog()
-            .into_iter()
-            .find(|template| template.id() == base_template_id)
-        {
-            template
-        } else {
-            session
-                .store
-                .load_report_template(base_template_id)
-                .map_err(map_store_error)?
-                .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?
-        };
-        let mut sections = base.sections().to_vec();
-        sections.extend(additional_sections);
-        let template = ReportTemplateDefinition::new_custom(
-            LocalId::from_uuid(Uuid::new_v4()),
-            Revision::new(1).map_err(map_domain_error)?,
-            name,
-            description,
-            sections,
-        )
-        .map_err(map_domain_error)?;
-        session
-            .store
-            .save_report_template(&template, None)
-            .map_err(map_store_error)?;
-        session.last_active_unix_ms = now_unix_ms;
-        Ok(template)
-    }
-
-    pub fn create_guided_report(
-        &mut self,
-        project_id: LocalId,
-        template_id: LocalId,
-        now_unix_ms: i64,
-    ) -> Result<GuidedReport, LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let template = if let Some(template) = report_template_catalog()
-            .into_iter()
-            .find(|template| template.id() == template_id)
-        {
-            template
-        } else {
-            session
-                .store
-                .load_report_template(template_id)
-                .map_err(map_store_error)?
-                .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?
-        };
-        let report_number = reserve_report_identifier(&mut session.store, &template)?;
-        let report = GuidedReport::new_blank_with_fields(
-            LocalId::from_uuid(Uuid::new_v4()),
-            &template,
-            BTreeMap::from([(
-                "report_number".to_owned(),
-                GuidedReportFieldValue::Text(report_number),
-            )]),
-            now_unix_ms,
-        )
-        .map_err(map_domain_error)?;
-        session
-            .store
-            .save_guided_report(&report, None)
-            .map_err(map_store_error)?;
-        session.last_active_unix_ms = now_unix_ms;
-        Ok(report)
-    }
-
-    pub fn save_guided_report_fields(
-        &mut self,
-        project_id: LocalId,
-        report_id: LocalId,
-        expected_revision: Revision,
-        title: &str,
-        fields: BTreeMap<String, GuidedReportFieldValue>,
-        now_unix_ms: i64,
-    ) -> Result<GuidedReport, LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let report = session
-            .store
-            .load_guided_report(report_id)
-            .map_err(map_store_error)?
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?;
-        let template = if let Some(template) =
-            report_template_revision(report.template_id(), report.template_revision())
-        {
-            template
-        } else {
-            session
-                .store
-                .load_report_template_revision(report.template_id(), report.template_revision())
-                .map_err(map_store_error)?
-                .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?
-        };
-        let revised = report
-            .revise_fields(&template, expected_revision, title, fields, now_unix_ms)
-            .map_err(map_domain_error)?;
-        session
-            .store
-            .save_guided_report(&revised, Some(expected_revision))
-            .map_err(map_store_error)?;
-        session.last_active_unix_ms = now_unix_ms;
-        Ok(revised)
-    }
-
-    pub fn guided_report_readiness(
-        &mut self,
-        project_id: LocalId,
-        report_id: LocalId,
-        now_unix_ms: i64,
-    ) -> Result<Vec<ReportReadinessWarning>, LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let report = session
-            .store
-            .load_guided_report(report_id)
-            .map_err(map_store_error)?
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?;
-        let template = if let Some(template) =
-            report_template_revision(report.template_id(), report.template_revision())
-        {
-            template
-        } else {
-            session
-                .store
-                .load_report_template_revision(report.template_id(), report.template_revision())
-                .map_err(map_store_error)?
-                .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?
-        };
-        session.last_active_unix_ms = now_unix_ms;
-        Ok(report.readiness_warnings(&template))
-    }
-
-    pub fn update_guided_report_section_disposition(
-        &mut self,
-        project_id: LocalId,
-        report_id: LocalId,
-        expected_revision: Revision,
-        section_key: &str,
-        disposition: ReportSectionDisposition,
-        now_unix_ms: i64,
-    ) -> Result<GuidedReport, LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let report = session
-            .store
-            .load_guided_report(report_id)
-            .map_err(map_store_error)?
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?;
-        let template = if let Some(template) =
-            report_template_revision(report.template_id(), report.template_revision())
-        {
-            template
-        } else {
-            session
-                .store
-                .load_report_template_revision(report.template_id(), report.template_revision())
-                .map_err(map_store_error)?
-                .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?
-        };
-        let revised = report
-            .revise_section_disposition(
-                &template,
-                expected_revision,
-                section_key,
-                disposition,
-                now_unix_ms,
-            )
-            .map_err(map_domain_error)?;
-        session
-            .store
-            .save_guided_report(&revised, Some(expected_revision))
-            .map_err(map_store_error)?;
-        session.last_active_unix_ms = now_unix_ms;
-        Ok(revised)
-    }
-
-    pub fn upgrade_illicit_ecosystem_report(
-        &mut self,
-        project_id: LocalId,
-        report_id: LocalId,
-        expected_revision: Revision,
-        now_unix_ms: i64,
-    ) -> Result<GuidedReport, LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let report = session
-            .store
-            .load_guided_report(report_id)
-            .map_err(map_store_error)?
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?;
-        let source_template =
-            report_template_revision(report.template_id(), report.template_revision())
-                .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?;
-        let target_template = report_template_catalog()
-            .into_iter()
-            .find(|template| template.id() == report.template_id())
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?;
-        let generated_report_number = report
-            .fields()
-            .get("report_number")
-            .filter(|value| !guided_report_field_is_empty(value))
-            .is_none()
-            .then(|| reserve_report_identifier(&mut session.store, &target_template))
-            .transpose()?;
-        let upgraded = report
-            .upgrade_illicit_ecosystem_template(
-                &source_template,
-                &target_template,
-                generated_report_number.as_deref(),
-                expected_revision,
-                now_unix_ms,
-            )
-            .map_err(map_domain_error)?;
-        session
-            .store
-            .save_guided_report(&upgraded, Some(expected_revision))
-            .map_err(map_store_error)?;
-        session.last_active_unix_ms = now_unix_ms;
-        Ok(upgraded)
-    }
-
-    pub fn delete_guided_report(
-        &mut self,
-        project_id: LocalId,
-        report_id: LocalId,
-        now_unix_ms: i64,
-    ) -> Result<(), LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let deleted = session
-            .store
-            .soft_delete_guided_report(report_id, now_unix_ms)
-            .map_err(map_store_error)?;
-        if !deleted {
-            return Err(LifecycleError::new(LifecycleErrorCode::DocumentNotFound));
-        }
-        session.last_active_unix_ms = now_unix_ms;
-        Ok(())
-    }
-
-    pub fn restore_guided_report(
-        &mut self,
-        project_id: LocalId,
-        report_id: LocalId,
-        now_unix_ms: i64,
-    ) -> Result<GuidedReport, LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let restored = session
-            .store
-            .restore_guided_report(report_id)
-            .map_err(map_store_error)?;
-        if !restored {
-            return Err(LifecycleError::new(LifecycleErrorCode::DocumentNotFound));
-        }
-        let report = session
-            .store
-            .load_guided_report(report_id)
-            .map_err(map_store_error)?
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?;
-        session.last_active_unix_ms = now_unix_ms;
-        Ok(report)
-    }
-
-    pub fn load_guided_report_for_publication(
-        &mut self,
-        project_id: LocalId,
-        report_id: LocalId,
-        now_unix_ms: i64,
-    ) -> Result<(GuidedReport, ReportTemplateDefinition), LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let report = session
-            .store
-            .load_guided_report(report_id)
-            .map_err(map_store_error)?
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?;
-        let template = if let Some(template) =
-            report_template_revision(report.template_id(), report.template_revision())
-        {
-            template
-        } else {
-            session
-                .store
-                .load_report_template_revision(report.template_id(), report.template_revision())
-                .map_err(map_store_error)?
-                .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?
-        };
-        session.last_active_unix_ms = now_unix_ms;
-        Ok((report, template))
     }
 
     pub fn load_document_revision_for_publication(
@@ -1238,37 +859,6 @@ impl<K: ProjectKeyStore> ProjectManager<K> {
         require_current_document(&document)?;
         session.last_active_unix_ms = now_unix_ms;
         Ok(document)
-    }
-
-    pub fn load_guided_report_revision_for_publication(
-        &mut self,
-        project_id: LocalId,
-        report_id: LocalId,
-        revision: Revision,
-        now_unix_ms: i64,
-    ) -> Result<(GuidedReport, ReportTemplateDefinition), LifecycleError> {
-        let session = self
-            .sessions
-            .get_mut(&project_id)
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
-        let report = session
-            .store
-            .load_guided_report_revision(report_id, revision)
-            .map_err(map_store_error)?
-            .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentRevisionNotFound))?;
-        let template = if let Some(template) =
-            report_template_revision(report.template_id(), report.template_revision())
-        {
-            template
-        } else {
-            session
-                .store
-                .load_report_template_revision(report.template_id(), report.template_revision())
-                .map_err(map_store_error)?
-                .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentRevisionNotFound))?
-        };
-        session.last_active_unix_ms = now_unix_ms;
-        Ok((report, template))
     }
 
     pub fn list_brand_profiles(
@@ -2260,6 +1850,7 @@ impl<K: ProjectKeyStore> ProjectManager<K> {
             .get_mut(&project_id)
             .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::ProjectLocked))?;
         let document = require_active_document(&session.store, document_id)?;
+        let document = promote_legacy_report(&mut session.store, document, now_unix_ms)?;
         session.last_active_unix_ms = now_unix_ms;
         Ok(document)
     }
@@ -2272,6 +1863,25 @@ impl<K: ProjectKeyStore> ProjectManager<K> {
         root: Value,
         now_unix_ms: i64,
     ) -> Result<DocumentEnvelope, LifecycleError> {
+        self.save_document_with_properties(
+            project_id,
+            document_id,
+            expected_revision,
+            root,
+            None,
+            now_unix_ms,
+        )
+    }
+
+    pub fn save_document_with_properties(
+        &mut self,
+        project_id: LocalId,
+        document_id: LocalId,
+        expected_revision: Revision,
+        root: Value,
+        report_properties: Option<ReportProperties>,
+        now_unix_ms: i64,
+    ) -> Result<DocumentEnvelope, LifecycleError> {
         let session = self
             .sessions
             .get_mut(&project_id)
@@ -2282,11 +1892,27 @@ impl<K: ProjectKeyStore> ProjectManager<K> {
             .map_err(map_store_error)?
             .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::DocumentNotFound))?;
         require_current_document(&current)?;
-        let document = DocumentEnvelope::new(
+        let report_properties = if current.kind() == DocumentKind::Report {
+            let current_properties = current
+                .report_properties()
+                .ok_or_else(|| LifecycleError::new(LifecycleErrorCode::InvalidDocument))?;
+            let next_properties = report_properties.unwrap_or_else(|| current_properties.clone());
+            if next_properties.report_id() != current_properties.report_id() {
+                return Err(LifecycleError::new(LifecycleErrorCode::InvalidDocument));
+            }
+            Some(next_properties)
+        } else {
+            if report_properties.is_some() {
+                return Err(LifecycleError::new(LifecycleErrorCode::InvalidDocument));
+            }
+            None
+        };
+        let document = DocumentEnvelope::new_with_report_properties(
             current.id(),
             current.kind(),
             expected_revision.next().map_err(map_domain_error)?,
             root,
+            report_properties,
         )
         .map_err(map_domain_error)?;
         session
@@ -2395,9 +2021,9 @@ impl<K: ProjectKeyStore> ProjectManager<K> {
         require_active_document(&session.store, document_id)?;
         let from = load_document_revision(&session.store, document_id, from_revision)?;
         let to = load_document_revision(&session.store, document_id, to_revision)?;
-        let before = render_document(&from);
-        let after = render_document(&to);
-        let (segments, simplified) = compare_document_text(before.plain_text(), after.plain_text());
+        let before = document_plain_text(&from);
+        let after = document_plain_text(&to);
+        let (segments, simplified) = compare_document_text(&before, &after);
         session.last_active_unix_ms = now_unix_ms;
         Ok(DocumentRevisionDiff::new(
             from_revision,
@@ -2424,11 +2050,12 @@ impl<K: ProjectKeyStore> ProjectManager<K> {
             return Err(LifecycleError::new(LifecycleErrorCode::RevisionConflict));
         }
         let source = load_document_revision(&session.store, document_id, source_revision)?;
-        let restored = DocumentEnvelope::new(
+        let restored = DocumentEnvelope::new_with_report_properties(
             current.id(),
             current.kind(),
             expected_revision.next().map_err(map_domain_error)?,
             source.root().clone(),
+            source.report_properties().cloned(),
         )
         .map_err(map_domain_error)?;
         session
@@ -2762,10 +2389,16 @@ struct ProjectSession {
 }
 
 fn default_document_root(kind: DocumentKind) -> Value {
+    if kind == DocumentKind::Report {
+        return serde_json::json!({
+            "type": "doc",
+            "content": [{"type": "paragraph"}]
+        });
+    }
     let title = match kind {
         DocumentKind::Investigation => "Untitled investigation",
         DocumentKind::AnalystNote => "Untitled analyst note",
-        DocumentKind::Report => "Untitled report",
+        DocumentKind::Report => unreachable!(),
     };
     serde_json::json!({
         "type": "doc",
@@ -2805,10 +2438,59 @@ fn require_stored_document(
 }
 
 fn require_current_document(document: &DocumentEnvelope) -> Result<(), LifecycleError> {
-    if document.kind() == DocumentKind::Report {
+    let _ = document;
+    Ok(())
+}
+
+fn promote_legacy_report(
+    store: &mut EncryptedStore,
+    document: DocumentEnvelope,
+    now_unix_ms: i64,
+) -> Result<DocumentEnvelope, LifecycleError> {
+    if document.kind() != DocumentKind::Report || document.report_properties().is_some() {
+        return Ok(document);
+    }
+    let sequence = store
+        .reserve_report_number("RPT", 1)
+        .map_err(map_store_error)?;
+    let properties = ReportProperties::new(
+        format!("RPT-{sequence:04}"),
+        "Untitled report",
+        Vec::new(),
+        None,
+        iso_date_from_unix_ms(now_unix_ms)?.as_str(),
+    )
+    .map_err(map_domain_error)?;
+    let promoted = DocumentEnvelope::new_report(
+        document.id(),
+        document.revision().next().map_err(map_domain_error)?,
+        document.root().clone(),
+        properties,
+    )
+    .map_err(map_domain_error)?;
+    store
+        .save_document_at(&promoted, Some(document.revision()), now_unix_ms)
+        .map_err(map_store_error)?;
+    Ok(promoted)
+}
+
+fn iso_date_from_unix_ms(unix_ms: i64) -> Result<String, LifecycleError> {
+    if unix_ms < 0 {
         return Err(LifecycleError::new(LifecycleErrorCode::InvalidDocument));
     }
-    Ok(())
+    let days = unix_ms.div_euclid(86_400_000);
+    let shifted = days + 719_468;
+    let era = shifted.div_euclid(146_097);
+    let day_of_era = shifted - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += i64::from(month <= 2);
+    Ok(format!("{year:04}-{month:02}-{day:02}"))
 }
 
 fn load_document_revision(
@@ -3513,50 +3195,6 @@ fn decode_hex<const N: usize>(encoded: &str) -> Option<[u8; N]> {
     Some(decoded)
 }
 
-fn reserve_report_identifier(
-    store: &mut EncryptedStore,
-    template: &ReportTemplateDefinition,
-) -> Result<String, LifecycleError> {
-    let prefix = report_identifier_prefix(template);
-    let marker = format!("{prefix}-");
-    let minimum_next = store
-        .list_all_guided_reports()
-        .map_err(map_store_error)?
-        .into_iter()
-        .filter_map(|report| match report.fields().get("report_number") {
-            Some(GuidedReportFieldValue::Text(value)) => value
-                .strip_prefix(&marker)
-                .filter(|suffix| {
-                    !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
-                })
-                .and_then(|suffix| suffix.parse::<u64>().ok()),
-            _ => None,
-        })
-        .max()
-        .map_or(1, |value| value.saturating_add(1));
-    let sequence = store
-        .reserve_report_number(prefix, minimum_next)
-        .map_err(map_store_error)?;
-    Ok(format!("{prefix}-{sequence:04}"))
-}
-
-fn report_identifier_prefix(template: &ReportTemplateDefinition) -> &'static str {
-    const ILLICIT_ECOSYSTEM_TEMPLATE_ID: &str = "6fba43e4-fcac-5b12-b37a-17aa0d4e99ca";
-    match template.builtin() {
-        Some(BuiltinReportTemplate::ThreatActorProfile) => "TAP",
-        Some(BuiltinReportTemplate::IntrusionAnalysis) => "IA",
-        Some(BuiltinReportTemplate::CampaignReport) => "CR",
-        Some(BuiltinReportTemplate::ExecutiveReport) => "ER",
-        Some(BuiltinReportTemplate::BlankGuidedReport) => "RPT",
-        None if template.id().to_string() == ILLICIT_ECOSYSTEM_TEMPLATE_ID => "IER",
-        None => "RPT",
-    }
-}
-
-fn guided_report_field_is_empty(value: &GuidedReportFieldValue) -> bool {
-    matches!(value, GuidedReportFieldValue::Text(text) if text.trim().is_empty())
-}
-
 const fn decode_hex_nibble(value: u8) -> Option<u8> {
     match value {
         b'0'..=b'9' => Some(value - b'0'),
@@ -3594,9 +3232,7 @@ fn set_file_permissions(_file: &fs::File) -> Result<(), LifecycleError> {
 fn map_domain_error(error: sheut_core::DomainError) -> LifecycleError {
     match error.code() {
         DomainErrorCode::InvalidName => LifecycleError::new(LifecycleErrorCode::InvalidName),
-        DomainErrorCode::InvalidDocument
-        | DomainErrorCode::InvalidGuidedReport
-        | DomainErrorCode::InvalidBrandProfile => {
+        DomainErrorCode::InvalidDocument | DomainErrorCode::InvalidBrandProfile => {
             LifecycleError::new(LifecycleErrorCode::InvalidDocument)
         }
         DomainErrorCode::InvalidAttachment => {

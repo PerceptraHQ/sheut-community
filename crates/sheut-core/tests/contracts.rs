@@ -4,9 +4,9 @@ use image::{DynamicImage, ImageFormat};
 use sheut_core::{
     AnalyticConfidence, CatalogReference, DocumentEnvelope, DocumentKind, DomainErrorCode,
     GraphViewport, GraphWorkspace, ImageAttachmentMetadata, ImageMediaType, LocalId, MitreCatalog,
-    MitreTechniqueReference, Position, ProjectMetadata, Revision, SemanticRelationshipDraft,
-    TechniqueAssessment, TechniqueObservation, TechniqueOutcome, TlpMarking, VisualLink,
-    WorkspaceItem, WorkspaceItemKind, WorkspaceMode, render_document,
+    MitreTechniqueReference, Position, ProjectMetadata, ReportAuthor, ReportProperties, Revision,
+    SemanticRelationshipDraft, TechniqueAssessment, TechniqueObservation, TechniqueOutcome,
+    TlpMarking, VisualLink, WorkspaceItem, WorkspaceItemKind, WorkspaceMode, document_plain_text,
 };
 
 const PROJECT_ID: &str = "6f9619ff-8b86-d011-b42d-00cf4fc964ff";
@@ -108,7 +108,134 @@ fn structured_documents_have_a_version_kind_and_revision() {
 }
 
 #[test]
-fn structured_documents_render_escaped_html_and_plain_text() {
+fn reports_round_trip_typed_properties_with_a_semantic_page_break() {
+    let properties = ReportProperties::new(
+        "RPT-0001",
+        "Operation Shadow",
+        vec![ReportAuthor::new("Alex Morgan", Some("Lead analyst")).unwrap()],
+        Some("Example Intelligence Unit"),
+        "2026-08-03",
+    )
+    .unwrap();
+    let document = DocumentEnvelope::new_report(
+        LocalId::parse(SOURCE_ID).unwrap(),
+        Revision::new(1).unwrap(),
+        serde_json::json!({
+            "type": "doc",
+            "content": [
+                {"type": "paragraph"},
+                {"type": "pageBreak"},
+                {"type": "paragraph"}
+            ]
+        }),
+        properties.clone(),
+    )
+    .unwrap();
+
+    let json = serde_json::to_value(&document).unwrap();
+    assert_eq!(json["reportProperties"]["reportId"], "RPT-0001");
+    assert_eq!(
+        json["reportProperties"]["authors"][0]["role"],
+        "Lead analyst"
+    );
+    assert_eq!(document.report_properties(), Some(&properties));
+    assert_eq!(
+        serde_json::from_value::<DocumentEnvelope>(json).unwrap(),
+        document
+    );
+}
+
+#[test]
+fn evidence_citations_keep_a_frozen_snapshot_and_reject_malformed_references() {
+    let citation = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "paragraph",
+            "content": [{
+                "type": "evidenceCitation",
+                "attrs": {
+                    "evidenceId": TARGET_ID,
+                    "revision": 3,
+                    "label": "Captured storefront",
+                    "fileName": "storefront.png",
+                    "mediaType": "image/png",
+                    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+                }
+            }]
+        }]
+    });
+    let document = DocumentEnvelope::new(
+        LocalId::parse(SOURCE_ID).unwrap(),
+        DocumentKind::Investigation,
+        Revision::new(1).unwrap(),
+        citation.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        document_plain_text(&document),
+        "[Evidence: Captured storefront]"
+    );
+
+    for invalid in [serde_json::json!(0), serde_json::json!("not-a-sha256")] {
+        let mut malformed = citation.clone();
+        let field = if invalid.is_number() {
+            "revision"
+        } else {
+            "sha256"
+        };
+        malformed["content"][0]["content"][0]["attrs"][field] = invalid;
+        assert_eq!(
+            DocumentEnvelope::new(
+                LocalId::parse(SOURCE_ID).unwrap(),
+                DocumentKind::Investigation,
+                Revision::new(1).unwrap(),
+                malformed,
+            )
+            .unwrap_err()
+            .code(),
+            DomainErrorCode::InvalidDocument
+        );
+    }
+}
+
+#[test]
+fn report_properties_are_valid_only_for_reports_and_reject_malformed_metadata() {
+    let properties = ReportProperties::new(
+        "RPT-0001",
+        "Operation Shadow",
+        Vec::new(),
+        None,
+        "2026-08-03",
+    )
+    .unwrap();
+    assert_eq!(
+        DocumentEnvelope::new_with_report_properties(
+            LocalId::parse(SOURCE_ID).unwrap(),
+            DocumentKind::Investigation,
+            Revision::new(1).unwrap(),
+            serde_json::json!({"type": "doc", "content": []}),
+            Some(properties),
+        )
+        .unwrap_err()
+        .code(),
+        DomainErrorCode::InvalidReportProperties
+    );
+    for (report_id, issue_date) in [
+        ("../../report", "2026-08-03"),
+        ("RPT-1", "2026-08-03"),
+        ("RPT-0001", "2026-02-30"),
+    ] {
+        assert_eq!(
+            ReportProperties::new(report_id, "Report", Vec::new(), None, issue_date)
+                .unwrap_err()
+                .code(),
+            DomainErrorCode::InvalidReportProperties
+        );
+    }
+}
+
+#[test]
+fn structured_documents_project_plain_text_without_formatting_payloads() {
     let document = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Investigation,
@@ -145,21 +272,14 @@ fn structured_documents_render_escaped_html_and_plain_text() {
     )
     .unwrap();
 
-    let rendered = render_document(&document);
     assert_eq!(
-        rendered.html(),
-        "<h1>Operation &lt;Shadow&gt;</h1><p><strong>Evidence &amp; notes</strong> <a href=\"https://example.com/a?x=1&amp;y=2\">source</a></p>"
-    );
-    assert_eq!(
-        rendered.plain_text(),
+        document_plain_text(&document),
         "Operation <Shadow>\nEvidence & notes source"
     );
-    assert!(!rendered.html().contains("onclick"));
-    assert!(!rendered.html().contains("target="));
 }
 
 #[test]
-fn text_alignment_is_bounded_and_preserved_in_derived_html() {
+fn text_alignment_is_bounded_in_structured_documents() {
     let document = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Report,
@@ -175,10 +295,7 @@ fn text_alignment_is_bounded_and_preserved_in_derived_html() {
     )
     .unwrap();
 
-    assert_eq!(
-        render_document(&document).html(),
-        "<p style=\"text-align:center\">Centered finding</p>"
-    );
+    assert_eq!(document_plain_text(&document), "Centered finding");
     let justified = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Report,
@@ -193,10 +310,7 @@ fn text_alignment_is_bounded_and_preserved_in_derived_html() {
         }),
     )
     .unwrap();
-    assert_eq!(
-        render_document(&justified).html(),
-        "<h3 style=\"text-align:justify\">Justified section</h3>"
-    );
+    assert_eq!(document_plain_text(&justified), "Justified section");
     assert_eq!(
         DocumentEnvelope::new(
             LocalId::parse(SOURCE_ID).unwrap(),
@@ -255,11 +369,7 @@ fn analyst_formatting_marks_and_task_lists_round_trip_through_rust() {
     .unwrap();
 
     assert_eq!(
-        render_document(&document).html(),
-        "<p><sub><sup><mark>TLP AMBER x2 H2O</mark></sup></sub></p><ul data-type=\"taskList\"><li data-checked=\"true\"><p>Validate evidence</p></li></ul>"
-    );
-    assert_eq!(
-        render_document(&document).plain_text(),
+        document_plain_text(&document),
         "TLP AMBER x2 H2O\n[x] Validate evidence"
     );
 
@@ -285,7 +395,197 @@ fn analyst_formatting_marks_and_task_lists_round_trip_through_rust() {
 }
 
 #[test]
-fn tables_and_callouts_render_from_canonical_json() {
+fn semantic_report_formatting_accepts_only_bounded_inert_values() {
+    let valid = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "paragraph",
+            "attrs": {"lineSpacing": 1.5, "paragraphSpacing": 12},
+            "content": [{
+                "type": "text",
+                "text": "Bounded formatting",
+                "marks": [{
+                    "type": "textStyle",
+                    "attrs": {
+                        "fontFamily": "source_serif_4",
+                        "fontSize": 14,
+                        "color": "#17202b"
+                    }
+                }]
+            }]
+        }]
+    });
+    DocumentEnvelope::new(
+        LocalId::parse(SOURCE_ID).unwrap(),
+        DocumentKind::Report,
+        Revision::new(1).unwrap(),
+        valid,
+    )
+    .unwrap();
+
+    for invalid in [
+        serde_json::json!({"fontFamily": "Comic Sans"}),
+        serde_json::json!({"fontFamily": "#eval(system.inputs)"}),
+        serde_json::json!({"fontSize": 96}),
+        serde_json::json!({"color": "red"}),
+        serde_json::json!({"color": "#fff; raw(typst)"}),
+    ] {
+        let error = DocumentEnvelope::new(
+            LocalId::parse(SOURCE_ID).unwrap(),
+            DocumentKind::Report,
+            Revision::new(1).unwrap(),
+            serde_json::json!({
+                "type": "doc",
+                "content": [{
+                    "type": "paragraph",
+                    "content": [{
+                        "type": "text",
+                        "text": "Rejected",
+                        "marks": [{"type": "textStyle", "attrs": invalid}]
+                    }]
+                }]
+            }),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), DomainErrorCode::InvalidDocument);
+    }
+
+    for invalid_attrs in [
+        serde_json::json!({"lineSpacing": 1.25}),
+        serde_json::json!({"paragraphSpacing": 999}),
+    ] {
+        let error = DocumentEnvelope::new(
+            LocalId::parse(SOURCE_ID).unwrap(),
+            DocumentKind::Report,
+            Revision::new(1).unwrap(),
+            serde_json::json!({
+                "type": "doc",
+                "content": [{
+                    "type": "paragraph",
+                    "attrs": invalid_attrs,
+                    "content": [{"type": "text", "text": "Rejected"}]
+                }]
+            }),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), DomainErrorCode::InvalidDocument);
+    }
+}
+
+#[test]
+fn intelligence_nodes_keep_only_valid_stable_ids_and_frozen_snapshots() {
+    let valid = serde_json::json!({
+        "type": "doc",
+        "content": [
+            {
+                "type": "paragraph",
+                "content": [{
+                    "type": "projectReference",
+                    "attrs": {
+                        "sourceKind": "intelligence",
+                        "sourceId": TARGET_ID,
+                        "sourceVersion": "2026-08-04T00:00:00Z",
+                        "display": "inline",
+                        "label": "Observed domain",
+                        "snapshot": {"name": "example.test", "type": "Domain name"}
+                    }
+                }]
+            },
+            {
+                "type": "mitreSnapshot",
+                "attrs": {"observations": [{
+                    "observationId": WORKSPACE_ID,
+                    "revision": 3,
+                    "catalog": "attack_enterprise",
+                    "catalogVersion": "18.1",
+                    "techniqueId": "T1059",
+                    "techniqueName": "Command and Scripting Interpreter",
+                    "explanation": "Observed in captured execution logs."
+                }]}
+            },
+            {
+                "type": "graphSnapshot",
+                "attrs": {
+                    "attachmentId": SOURCE_ID,
+                    "workspaceId": WORKSPACE_ID,
+                    "workspaceRevision": 4,
+                    "workspaceName": "Infrastructure map",
+                    "placement": "appendix",
+                    "alt": "Analytical graph snapshot",
+                    "title": "Infrastructure map · revision 4"
+                }
+            }
+        ]
+    });
+    DocumentEnvelope::new(
+        LocalId::parse(SOURCE_ID).unwrap(),
+        DocumentKind::Report,
+        Revision::new(1).unwrap(),
+        valid,
+    )
+    .unwrap();
+
+    for invalid_node in [
+        serde_json::json!({
+            "type": "projectReference",
+            "attrs": {
+                "sourceKind": "intelligence",
+                "sourceId": "../../project.db",
+                "sourceVersion": null,
+                "display": "inline",
+                "label": "Unsafe",
+                "snapshot": {}
+            }
+        }),
+        serde_json::json!({
+            "type": "mitreSnapshot",
+            "attrs": {"observations": [{
+                "observationId": WORKSPACE_ID,
+                "revision": 0,
+                "catalog": "attack_enterprise",
+                "catalogVersion": "18.1",
+                "techniqueId": "T1059",
+                "techniqueName": "Technique",
+                "explanation": "Invalid revision"
+            }]}
+        }),
+        serde_json::json!({
+            "type": "graphSnapshot",
+            "attrs": {
+                "attachmentId": SOURCE_ID,
+                "workspaceId": "file:///private/graph.db",
+                "workspaceRevision": 4,
+                "workspaceName": "Unsafe",
+                "placement": "appendix",
+                "alt": "Unsafe",
+                "title": "Unsafe"
+            }
+        }),
+    ] {
+        let root = if invalid_node["type"] == "projectReference" {
+            serde_json::json!({
+                "type": "doc",
+                "content": [{"type": "paragraph", "content": [invalid_node]}]
+            })
+        } else {
+            serde_json::json!({"type": "doc", "content": [invalid_node]})
+        };
+        assert_eq!(
+            DocumentEnvelope::new(
+                LocalId::parse(SOURCE_ID).unwrap(),
+                DocumentKind::Report,
+                Revision::new(1).unwrap(),
+                root,
+            )
+            .unwrap_err()
+            .code(),
+            DomainErrorCode::InvalidDocument
+        );
+    }
+}
+
+#[test]
+fn tables_and_callouts_project_plain_text_from_canonical_json() {
     let document = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Investigation,
@@ -349,13 +649,8 @@ fn tables_and_callouts_render_from_canonical_json() {
     )
     .unwrap();
 
-    let rendered = render_document(&document);
     assert_eq!(
-        rendered.html(),
-        "<aside data-sheut-callout=\"info\"><p>Validate before sharing</p></aside><table><tbody><tr><th><p>Indicator</p></th><th><p>Status</p></th></tr><tr><td><p>evil[.]example</p></td><td><p>Confirmed</p></td></tr></tbody></table>"
-    );
-    assert_eq!(
-        rendered.plain_text(),
+        document_plain_text(&document),
         "Validate before sharing\nIndicator\tStatus\nevil[.]example\tConfirmed"
     );
 }
@@ -456,14 +751,7 @@ fn canonical_image_nodes_reference_opaque_attachments_without_paths() {
         }),
     )
     .unwrap();
-    let rendered = render_document(&document);
-    assert_eq!(
-        rendered.html(),
-        format!(
-            "<figure data-sheut-attachment=\"{TARGET_ID}\"><figcaption>Screenshot &lt;one&gt;</figcaption></figure>"
-        )
-    );
-    assert_eq!(rendered.plain_text(), "[Image: Screenshot <one>]");
+    assert_eq!(document_plain_text(&document), "[Image: Screenshot <one>]");
 
     let injected_path = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
@@ -487,7 +775,7 @@ fn canonical_image_nodes_reference_opaque_attachments_without_paths() {
 }
 
 #[test]
-fn guided_image_nodes_reference_project_evidence_without_rendering_internal_ids() {
+fn evidence_image_nodes_reference_project_evidence_without_projecting_internal_ids() {
     let document = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Report,
@@ -509,13 +797,9 @@ fn guided_image_nodes_reference_project_evidence_without_rendering_internal_ids(
     )
     .unwrap();
 
-    let rendered = render_document(&document);
-    assert_eq!(
-        rendered.html(),
-        "<figure data-sheut-evidence-image><figcaption>Captured storefront</figcaption></figure>"
-    );
-    assert!(!rendered.html().contains(TARGET_ID));
-    assert_eq!(rendered.plain_text(), "[Image: Captured storefront]");
+    let plain_text = document_plain_text(&document);
+    assert!(!plain_text.contains(TARGET_ID));
+    assert_eq!(plain_text, "[Image: Captured storefront]");
 
     let invalid_placement = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
@@ -575,7 +859,7 @@ fn malformed_tables_and_unknown_callout_tones_are_rejected() {
 }
 
 #[test]
-fn unsafe_links_render_as_plain_text() {
+fn unsafe_link_targets_do_not_enter_the_plain_text_projection() {
     let document = DocumentEnvelope::new(
         LocalId::parse(SOURCE_ID).unwrap(),
         DocumentKind::Investigation,
@@ -604,12 +888,10 @@ fn unsafe_links_render_as_plain_text() {
     )
     .unwrap();
 
-    let rendered = render_document(&document);
     assert_eq!(
-        rendered.html(),
-        "<p>do not run</p><p>control characters are unsafe</p>"
+        document_plain_text(&document),
+        "do not run\ncontrol characters are unsafe"
     );
-    assert!(!rendered.html().contains("javascript"));
 }
 
 #[test]
@@ -640,6 +922,21 @@ fn documents_reject_raw_html_and_excessive_nesting() {
     )
     .unwrap_err();
     assert_eq!(too_deep.code(), DomainErrorCode::InvalidDocument);
+
+    let oversized = DocumentEnvelope::new(
+        id,
+        DocumentKind::Report,
+        revision,
+        serde_json::json!({
+            "type": "doc",
+            "content": [{
+                "type": "paragraph",
+                "content": [{"type": "text", "text": "x".repeat(1_048_576)}]
+            }]
+        }),
+    )
+    .unwrap_err();
+    assert_eq!(oversized.code(), DomainErrorCode::InvalidDocument);
 }
 
 #[test]

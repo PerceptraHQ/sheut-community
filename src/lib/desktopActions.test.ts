@@ -8,7 +8,7 @@ import {
 describe("desktop actions", () => {
   it("accepts only the bounded action identifiers shared with the native menu", () => {
     expect(isDesktopActionId("file.save")).toBe(true);
-    expect(isDesktopActionId("help.guide.illicit-ecosystem-report")).toBe(true);
+    expect(isDesktopActionId("help.guide.document-native-reports")).toBe(true);
     expect(isDesktopActionId("help.guide../../untrusted")).toBe(false);
     expect(isDesktopActionId("file.delete-project")).toBe(false);
     expect(isDesktopActionId({ id: "file.save" })).toBe(false);
@@ -30,8 +30,8 @@ describe("desktop actions", () => {
   });
 
   it("resolves only bounded report-guide actions to help topics", () => {
-    expect(helpTopicFromDesktopAction("help.guide.illicit-ecosystem-report")).toBe(
-      "illicit-ecosystem-report",
+    expect(helpTopicFromDesktopAction("help.guide.document-native-reports")).toBe(
+      "document-native-reports",
     );
     expect(helpTopicFromDesktopAction("help.guides")).toBeNull();
   });

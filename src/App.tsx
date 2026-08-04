@@ -606,7 +606,10 @@ function Workbench() {
         workbenchLayout.secondarySideBarVisible && !zenMode && activeView !== "settings"
       }
       data-centered-layout={
-        workbenchLayout.centeredLayout && activeView !== "graph" && activeView !== "settings"
+        workbenchLayout.centeredLayout &&
+        activeView !== "graph" &&
+        activeView !== "settings" &&
+        activeView !== "investigations"
       }
       data-zen-mode={zenMode}
     >

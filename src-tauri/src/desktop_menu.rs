@@ -21,13 +21,7 @@ const DESKTOP_ACTION_IDS: &[&str] = &[
     "view.toggle-secondary-sidebar",
     "view.toggle-zen",
     "help.guides",
-    "help.guide.investigations-and-analyst-notes",
-    "help.guide.threat-actor-profile",
-    "help.guide.intrusion-analysis",
-    "help.guide.campaign-report",
-    "help.guide.executive-report",
-    "help.guide.blank-guided-report",
-    "help.guide.illicit-ecosystem-report",
+    "help.guide.document-native-reports",
     "help.about",
 ];
 
@@ -114,44 +108,15 @@ pub(crate) fn install(app: &mut App) -> tauri::Result<()> {
         .build()?;
 
     let guides = action_item("help.guides", "Help & Guides", None)?;
-    let investigations = action_item(
-        "help.guide.investigations-and-analyst-notes",
-        "Investigations and Analyst Notes",
+    let reports = action_item(
+        "help.guide.document-native-reports",
+        "Document-native Reports",
         None,
     )?;
-    let threat_actor = action_item(
-        "help.guide.threat-actor-profile",
-        "Threat Actor Profile",
-        None,
-    )?;
-    let intrusion = action_item("help.guide.intrusion-analysis", "Intrusion Analysis", None)?;
-    let campaign = action_item("help.guide.campaign-report", "Campaign Report", None)?;
-    let executive = action_item("help.guide.executive-report", "Executive Report", None)?;
-    let blank = action_item(
-        "help.guide.blank-guided-report",
-        "Blank Guided Report",
-        None,
-    )?;
-    let illicit = action_item(
-        "help.guide.illicit-ecosystem-report",
-        "Illicit Ecosystem Report",
-        None,
-    )?;
-    let report_guides = SubmenuBuilder::new(app, "Report Guides")
-        .items(&[
-            &investigations,
-            &threat_actor,
-            &intrusion,
-            &campaign,
-            &executive,
-            &blank,
-            &illicit,
-        ])
-        .build()?;
     let about = action_item("help.about", "About Sheut", None)?;
     let help = SubmenuBuilder::new(app, "Help")
         .item(&guides)
-        .item(&report_guides)
+        .item(&reports)
         .separator()
         .item(&about)
         .build()?;

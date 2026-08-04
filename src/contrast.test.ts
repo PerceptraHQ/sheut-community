@@ -51,4 +51,22 @@ describe("application text contrast", () => {
       expect(contrast("#ffffff", colorToken(background))).toBeGreaterThanOrEqual(7);
     }
   });
+
+  it("keeps report paper and inserted MITRE text at WCAG AAA contrast", () => {
+    for (const [foreground, background] of [
+      ["#17202b", "#ffffff"],
+      ["#0b1320", "#ffffff"],
+      ["#0b1320", "#e8edf1"],
+      ["#123047", "#e8f0f5"],
+      ["#334155", "#ffffff"],
+      ["#384554", "#ffffff"],
+      ["#7a1f1f", "#ffffff"],
+    ]) {
+      expect(contrast(foreground, background)).toBeGreaterThanOrEqual(7);
+    }
+    expect(appCss).toMatch(/\.report-page-surface\s*\{[^}]*--tw-prose-bold:\s*#0b1320;/su);
+    expect(appCss).toMatch(
+      /\.report-page-surface \.ProseMirror \.editor-mitre-grid > :is\(strong, span\)\s*\{[^}]*color:\s*#17202b;/su,
+    );
+  });
 });

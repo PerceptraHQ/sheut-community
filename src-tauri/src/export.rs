@@ -1,53 +1,40 @@
 use serde::{Deserialize, Serialize};
-use sheut_core::{
-    BrandProfile, DocumentEnvelope, GuidedReport, PublicationFormat, PublicationSnapshot,
-    ReportTemplateDefinition,
-};
+use sheut_core::{BrandProfile, DocumentEnvelope, PublicationFormat, PublicationSnapshot};
 #[cfg(test)]
 use sheut_core::{
     LocalId, PageOrientation, PaperSize, PublicationSettings, PublicationSource, TlpMarking,
-    render_document,
+    document_plain_text,
 };
 use sheut_publish::{PublicationAssets, PublicationIr, render_publication_with_assets};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum ExportFormat {
-    Html,
     Pdf,
-    Docx,
 }
 
 impl ExportFormat {
     pub(super) const fn from_publication_format(format: PublicationFormat) -> Self {
         match format {
-            PublicationFormat::Html => Self::Html,
             PublicationFormat::Pdf => Self::Pdf,
-            PublicationFormat::Docx => Self::Docx,
         }
     }
 
     pub(super) const fn extension(self) -> &'static str {
         match self {
-            Self::Html => "html",
             Self::Pdf => "pdf",
-            Self::Docx => "docx",
         }
     }
 
     pub(super) const fn filter_name(self) -> &'static str {
         match self {
-            Self::Html => "HTML document",
             Self::Pdf => "PDF document",
-            Self::Docx => "Word document",
         }
     }
 
     pub(super) const fn publication_format(self) -> PublicationFormat {
         match self {
-            Self::Html => PublicationFormat::Html,
             Self::Pdf => PublicationFormat::Pdf,
-            Self::Docx => PublicationFormat::Docx,
         }
     }
 }
@@ -109,23 +96,10 @@ pub(super) fn render_freeform_snapshot(
         .map_err(|_| ExportError)
 }
 
-pub(super) fn render_guided_snapshot(
-    report: &GuidedReport,
-    template: &ReportTemplateDefinition,
-    snapshot: &PublicationSnapshot,
-    brand: &BrandProfile,
-    assets: &PublicationAssets,
-) -> Result<Vec<u8>, ExportError> {
-    let publication = PublicationIr::from_guided(report, template).map_err(|_| ExportError)?;
-    render_publication_with_assets(&publication, snapshot, Some(brand), Some(assets))
-        .map_err(|_| ExportError)
-}
-
 #[cfg(test)]
 pub(super) fn suggested_file_name(document: &DocumentEnvelope, format: ExportFormat) -> String {
-    let rendered = render_document(document);
-    let title = rendered
-        .plain_text()
+    let plain_text = document_plain_text(document);
+    let title = plain_text
         .lines()
         .find(|line| !line.trim().is_empty())
         .unwrap_or("Sheut document");
@@ -242,23 +216,6 @@ mod tests {
         )
         .unwrap();
         let assets = PublicationAssets::default();
-        let html = export_bytes(
-            &document,
-            &brand,
-            &assets,
-            TlpMarking::Green,
-            ExportFormat::Html,
-            PaperSize::Letter,
-            PageOrientation::Landscape,
-        )
-        .unwrap();
-        let html = String::from_utf8(html).unwrap();
-        assert!(html.contains("Content-Security-Policy"));
-        assert!(html.contains("TLP:GREEN"));
-        assert!(html.contains("@page { size: Letter landscape;"));
-        assert!(html.contains("Observed &lt;script&gt; remains text."));
-        assert!(!html.contains("<script>"));
-
         let pdf = export_bytes(
             &document,
             &brand,
@@ -270,34 +227,14 @@ mod tests {
         )
         .unwrap();
         assert!(pdf.starts_with(b"%PDF-"));
-
-        let docx = export_bytes(
-            &document,
-            &brand,
-            &assets,
-            TlpMarking::Green,
-            ExportFormat::Docx,
-            PaperSize::Letter,
-            PageOrientation::Landscape,
-        )
-        .unwrap();
-        assert!(docx.starts_with(b"PK"));
     }
 
     #[test]
     fn suggested_names_cannot_escape_the_native_save_directory() {
         let document = fixture_document("../../Operation: Shadow\\Evidence");
         assert_eq!(
-            suggested_file_name(&document, ExportFormat::Html),
-            "Operation-Shadow-Evidence.html"
-        );
-        assert_eq!(
             suggested_file_name(&document, ExportFormat::Pdf),
             "Operation-Shadow-Evidence.pdf"
-        );
-        assert_eq!(
-            suggested_file_name(&document, ExportFormat::Docx),
-            "Operation-Shadow-Evidence.docx"
         );
     }
 
@@ -308,12 +245,8 @@ mod tests {
             "Incident-response.pdf"
         );
         assert_eq!(
-            requested_file_name("<script>.html", ExportFormat::Html),
-            "script.html"
-        );
-        assert_eq!(
-            requested_file_name("   ", ExportFormat::Docx),
-            "Sheut-document.docx"
+            requested_file_name("   ", ExportFormat::Pdf),
+            "Sheut-document.pdf"
         );
     }
 }

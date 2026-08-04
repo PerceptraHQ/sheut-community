@@ -1,9 +1,10 @@
 import { Button } from "@base-ui/react/button";
+import { Collapsible } from "@base-ui/react/collapsible";
 import { Dialog } from "@base-ui/react/dialog";
 import { Switch } from "@base-ui/react/switch";
 import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
-import { IconX } from "@tabler/icons-react";
+import { IconChevronDown, IconX } from "@tabler/icons-react";
 import { type SyntheticEvent, useEffect, useState } from "react";
 import { type BrandProfile, listBrandProfiles } from "../lib/brand-profiles";
 import {
@@ -14,7 +15,6 @@ import {
   type PublicationPageFurniture,
   type PublicationPaperSize,
   type PublicationRecord,
-  type PublicationSelectionOption,
   type PublicationStatus,
   reproducePublication,
 } from "../lib/documents";
@@ -28,13 +28,12 @@ interface PublicationDialogProps {
   busy: boolean;
   defaultTlpMarking: TlpMarking;
   initialFileName: string;
+  initialPaperSize?: PublicationPaperSize;
   onOpenChange: (open: boolean) => void;
   onPublish: (options: DocumentPublicationOptions) => Promise<void>;
   open: boolean;
   projectId: string;
   sourceId: string;
-  sections?: readonly PublicationSelectionOption[];
-  appendices?: readonly PublicationSelectionOption[];
   title?: string;
 }
 
@@ -44,8 +43,6 @@ const defaultPageFurniture: PublicationPageFurniture = {
   marking: true,
   page_numbers: true,
 };
-const emptySelectionOptions: readonly PublicationSelectionOption[] = [];
-
 const paperSizeOptions: readonly SelectFieldOption[] = [
   { value: "a4", label: "A4", secondary: "210 × 297 mm" },
   { value: "letter", label: "Letter", secondary: "US Letter" },
@@ -60,18 +57,17 @@ export function PublicationDialog({
   busy,
   defaultTlpMarking,
   initialFileName,
+  initialPaperSize = "a4",
   onOpenChange,
   onPublish,
   open,
   projectId,
   sourceId,
-  sections = emptySelectionOptions,
-  appendices = emptySelectionOptions,
   title = "Publish report",
 }: PublicationDialogProps) {
   const notices = useVaultNotices();
-  const [format, setFormat] = useState<DocumentExportFormat>("html");
-  const [paperSize, setPaperSize] = useState<PublicationPaperSize>("a4");
+  const format: DocumentExportFormat = "pdf";
+  const [paperSize, setPaperSize] = useState<PublicationPaperSize>(initialPaperSize);
   const [orientation, setOrientation] = useState<PublicationOrientation>("portrait");
   const [tlpMarking, setTlpMarking] = useState<TlpMarking>(defaultTlpMarking);
   const [fileName, setFileName] = useState(initialFileName);
@@ -85,12 +81,6 @@ export function PublicationDialog({
   const [changeNote, setChangeNote] = useState("");
   const [pageFurniture, setPageFurniture] =
     useState<PublicationPageFurniture>(defaultPageFurniture);
-  const [includedSections, setIncludedSections] = useState<string[]>(() =>
-    sections.map((section) => section.key),
-  );
-  const [includedAppendices, setIncludedAppendices] = useState<string[]>(() =>
-    appendices.map((appendix) => appendix.key),
-  );
   const [publicationRecords, setPublicationRecords] = useState<PublicationRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState(open);
   const [reproducingId, setReproducingId] = useState<string | null>(null);
@@ -220,10 +210,6 @@ export function PublicationDialog({
       reportValidation("Describe what changed in this release.");
       return;
     }
-    if (sections.length > 0 && includedSections.length === 0) {
-      reportValidation("Include at least one report section.");
-      return;
-    }
     try {
       await onPublish({
         format,
@@ -237,9 +223,8 @@ export function PublicationDialog({
         includeReleaseHistory: version === "1.0" ? false : includeReleaseHistory,
         changeNote: version === "1.0" ? null : changeNote.trim(),
         pageFurniture,
-        includedSections,
-        appendices:
-          appendices.length > 0 && includedAppendices.length === 0 ? ["none"] : includedAppendices,
+        includedSections: [],
+        appendices: [],
         fileName: trimmed,
       });
       onOpenChange(false);
@@ -265,284 +250,270 @@ export function PublicationDialog({
           className="grid max-h-[82vh] gap-4 overflow-y-auto p-4"
           onSubmit={(event) => void submit(event)}
         >
-          <Dialog.Description className="m-0 text-copy-muted text-xs leading-5">
-            These settings apply to this publication only. They do not mutate report content or
-            project defaults.
-          </Dialog.Description>
-          <section
-            className="grid gap-2 rounded-sm border border-panel-border bg-panel-deep p-3"
-            aria-labelledby="publication-history-title"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="m-0 text-sm font-semibold" id="publication-history-title">
-                Publication history
-              </h3>
-              <span className="text-copy-faint text-xs">{publicationRecords.length} saved</span>
-            </div>
-            {historyLoading ? (
-              <p className="m-0 text-copy-faint text-xs">Loading history…</p>
-            ) : null}
-            {!historyLoading && publicationRecords.length === 0 ? (
-              <p className="m-0 text-copy-faint text-xs">
-                No publications have been generated from this report yet.
-              </p>
-            ) : null}
-            {publicationRecords.slice(0, 8).map((record) => (
-              <article
-                className="grid gap-2 rounded-sm border border-panel-border bg-panel-base p-2.5"
-                key={record.id}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <span>
-                    <strong className="block text-copy-primary text-xs">
-                      v{record.snapshot.release_version} · {record.snapshot.format.toUpperCase()} ·{" "}
-                      {record.snapshot.publication_status}
-                    </strong>
-                    <span className="mt-0.5 block text-copy-faint text-[11px]">
-                      {record.snapshot.paper_size.toUpperCase()} · {record.snapshot.orientation} ·
-                      source revision {record.snapshot.source.revision}
-                    </span>
-                  </span>
-                  <Button
-                    className="control-button shrink-0"
-                    type="button"
-                    disabled={busy || reproducingId !== null}
-                    onClick={() => void reproduce(record)}
-                  >
-                    {reproducingId === record.id ? "Verifying…" : "Reproduce"}
-                  </Button>
-                </div>
-                <span className="truncate text-copy-faint text-[11px]" title={record.sha256}>
-                  SHA-256 fingerprint {record.sha256}
+          <div className="flex items-start justify-between gap-4 rounded-sm border border-panel-border bg-panel-deep p-3">
+            <Dialog.Description className="m-0 text-copy-muted text-xs leading-5">
+              The full report, referenced evidence, and analytical figures are included
+              automatically. These settings affect this publication only.
+            </Dialog.Description>
+            <span className="shrink-0 rounded-sm border border-panel-border bg-panel-base px-2 py-1 font-semibold text-copy-primary text-xs">
+              PDF
+            </span>
+          </div>
+          <Collapsible.Root className="rounded-sm border border-panel-border bg-panel-deep">
+            <Collapsible.Trigger className="group flex w-full cursor-pointer items-center justify-between gap-3 border-0 bg-transparent px-3 py-2.5 text-left text-copy-secondary hover:bg-panel-hover hover:text-copy-primary">
+              <span>
+                <strong className="block text-xs">Publication history</strong>
+                <span className="mt-0.5 block text-copy-faint text-[11px]">
+                  {historyLoading
+                    ? "Loading…"
+                    : `${publicationRecords.length} saved publication${publicationRecords.length === 1 ? "" : "s"}`}
                 </span>
-              </article>
-            ))}
+              </span>
+              <IconChevronDown
+                className="transition-transform group-data-panel-open:rotate-180"
+                size={15}
+                aria-hidden="true"
+              />
+            </Collapsible.Trigger>
+            <Collapsible.Panel className="h-[var(--collapsible-panel-height)] overflow-hidden border-panel-border border-t transition-[height] duration-150 data-ending-style:h-0 data-starting-style:h-0">
+              <div className="grid max-h-64 gap-2 overflow-y-auto p-3">
+                {!historyLoading && publicationRecords.length === 0 ? (
+                  <p className="m-0 text-copy-faint text-xs">
+                    No publications have been generated from this report yet.
+                  </p>
+                ) : null}
+                {publicationRecords.slice(0, 8).map((record) => (
+                  <article
+                    className="grid gap-2 rounded-sm border border-panel-border bg-panel-base p-2.5"
+                    key={record.id}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <span>
+                        <strong className="block text-copy-primary text-xs">
+                          v{record.snapshot.release_version} · {record.snapshot.publication_status}
+                        </strong>
+                        <span className="mt-0.5 block text-copy-faint text-[11px]">
+                          {record.snapshot.paper_size.toUpperCase()} · {record.snapshot.orientation}{" "}
+                          · source revision {record.snapshot.source.revision}
+                        </span>
+                      </span>
+                      <Button
+                        className="control-button shrink-0"
+                        type="button"
+                        disabled={busy || reproducingId !== null}
+                        onClick={() => void reproduce(record)}
+                      >
+                        {reproducingId === record.id ? "Verifying…" : "Reproduce"}
+                      </Button>
+                    </div>
+                    <span className="truncate text-copy-faint text-[11px]" title={record.sha256}>
+                      SHA-256 {record.sha256}
+                    </span>
+                  </article>
+                ))}
+              </div>
+            </Collapsible.Panel>
+          </Collapsible.Root>
+          <section className="grid gap-3 rounded-sm border border-panel-border bg-panel-deep p-3">
+            <h3 className="m-0 text-copy-primary text-xs font-semibold">Brand and page</h3>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <SelectField
+                ariaLabel="Brand Profile"
+                disabled={busy || profilesLoading}
+                label="Brand Profile"
+                onChange={(value) => {
+                  if (value === "builtin") {
+                    setBrandProfileId(null);
+                    setBrandProfileRevision(null);
+                    setPageFurniture(defaultPageFurniture);
+                    return;
+                  }
+                  const profile = profiles.find((item) => item.id === value);
+                  if (!profile) return;
+                  setBrandProfileId(profile.id);
+                  setBrandProfileRevision(profile.revision);
+                  setPaperSize(profile.default_paper_size);
+                  setOrientation(profile.default_orientation);
+                  setPageFurniture(profile.page_furniture);
+                }}
+                options={brandOptions}
+                placeholder={profilesLoading ? "Loading Brand Profiles…" : "Choose Brand Profile"}
+                value={brandProfileId ?? "builtin"}
+              />
+              <SelectField
+                ariaLabel="Brand Profile revision"
+                disabled
+                label="Profile revision"
+                onChange={() => undefined}
+                options={revisionOptions}
+                placeholder="Revision"
+                value={selectedProfile ? String(selectedProfile.revision) : "builtin"}
+              />
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <SelectField
+                ariaLabel="Paper size"
+                disabled={busy}
+                label="Paper size"
+                onChange={(value) => {
+                  if (value === "a4" || value === "letter") setPaperSize(value);
+                }}
+                options={paperSizeOptions}
+                placeholder="Choose paper size"
+                value={paperSize}
+              />
+              <SelectField
+                ariaLabel="Orientation"
+                disabled={busy}
+                label="Orientation"
+                onChange={(value) => {
+                  if (value === "portrait" || value === "landscape") setOrientation(value);
+                }}
+                options={orientationOptions}
+                placeholder="Choose orientation"
+                value={orientation}
+              />
+            </div>
+            <SelectField
+              ariaLabel="TLP marking"
+              disabled={busy}
+              label="TLP marking"
+              onChange={(value) => {
+                if (isTlpMarking(value)) setTlpMarking(value);
+              }}
+              options={tlpSelectOptions}
+              placeholder="Choose TLP marking"
+              value={tlpMarking}
+            />
+            <fieldset className="grid gap-2 border-panel-border border-t pt-3">
+              <legend className="sr-only">Page furniture</legend>
+              <div className="grid grid-cols-2 gap-2">
+                {(
+                  [
+                    ["header", "Header"],
+                    ["footer", "Footer"],
+                    ["marking", "TLP marking"],
+                    ["page_numbers", "Page numbers"],
+                  ] as const
+                ).map(([key, label]) => (
+                  <div
+                    className="flex items-center justify-between gap-3 text-copy-secondary text-xs"
+                    key={key}
+                  >
+                    <span id={`page-furniture-${key}`}>{label}</span>
+                    <Switch.Root
+                      nativeButton
+                      render={<button type="button" />}
+                      checked={pageFurniture[key]}
+                      onCheckedChange={(checked) =>
+                        setPageFurniture((current) => ({ ...current, [key]: checked }))
+                      }
+                      className="settings-switch"
+                      aria-label={`Include ${label.toLocaleLowerCase("en")}`}
+                      disabled={busy}
+                    >
+                      <Switch.Thumb className="settings-switch-thumb" />
+                    </Switch.Root>
+                  </div>
+                ))}
+              </div>
+            </fieldset>
           </section>
-          <div className="grid gap-1.5">
-            <span className="font-medium text-copy-secondary text-xs">Format</span>
-            <ToggleGroup
-              className="export-format-group"
-              aria-label="Export format"
-              value={[format]}
-              onValueChange={(value) => {
-                const next = value[0];
-                if (next === "html" || next === "pdf" || next === "docx") setFormat(next);
-              }}
-            >
-              {(["html", "pdf", "docx"] as const).map((value) => (
-                <Toggle className="export-format-option" value={value} disabled={busy} key={value}>
-                  {value.toUpperCase()}
-                </Toggle>
-              ))}
-            </ToggleGroup>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <SelectField
-              ariaLabel="Brand Profile"
-              disabled={busy || profilesLoading}
-              label="Brand Profile"
-              onChange={(value) => {
-                if (value === "builtin") {
-                  setBrandProfileId(null);
-                  setBrandProfileRevision(null);
-                  setPageFurniture(defaultPageFurniture);
-                  return;
-                }
-                const profile = profiles.find((item) => item.id === value);
-                if (!profile) return;
-                setBrandProfileId(profile.id);
-                setBrandProfileRevision(profile.revision);
-                setPaperSize(profile.default_paper_size);
-                setOrientation(profile.default_orientation);
-                setPageFurniture(profile.page_furniture);
-              }}
-              options={brandOptions}
-              placeholder={profilesLoading ? "Loading Brand Profiles…" : "Choose Brand Profile"}
-              value={brandProfileId ?? "builtin"}
-            />
-            <SelectField
-              ariaLabel="Brand Profile revision"
-              disabled
-              label="Profile revision"
-              onChange={() => undefined}
-              options={revisionOptions}
-              placeholder="Revision"
-              value={selectedProfile ? String(selectedProfile.revision) : "builtin"}
-            />
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <SelectField
-              ariaLabel="Paper size"
-              disabled={busy}
-              label="Paper size"
-              onChange={(value) => {
-                if (value === "a4" || value === "letter") setPaperSize(value);
-              }}
-              options={paperSizeOptions}
-              placeholder="Choose paper size"
-              value={paperSize}
-            />
-            <SelectField
-              ariaLabel="Orientation"
-              disabled={busy}
-              label="Orientation"
-              onChange={(value) => {
-                if (value === "portrait" || value === "landscape") setOrientation(value);
-              }}
-              options={orientationOptions}
-              placeholder="Choose orientation"
-              value={orientation}
-            />
-          </div>
-          <SelectField
-            ariaLabel="TLP marking"
-            disabled={busy}
-            label="TLP marking"
-            onChange={(value) => {
-              if (isTlpMarking(value)) setTlpMarking(value);
-            }}
-            options={tlpSelectOptions}
-            placeholder="Choose TLP marking"
-            value={tlpMarking}
-          />
-          <fieldset className="grid gap-2 rounded-sm border border-panel-border bg-panel-deep p-3">
-            <legend className="px-1 font-medium text-copy-secondary text-xs">Page furniture</legend>
-            <div className="grid grid-cols-2 gap-2">
-              {(
-                [
-                  ["header", "Header"],
-                  ["footer", "Footer"],
-                  ["marking", "TLP marking"],
-                  ["page_numbers", "Page numbers"],
-                ] as const
-              ).map(([key, label]) => (
-                <div
-                  className="flex items-center justify-between gap-3 text-copy-secondary text-xs"
-                  key={key}
+          <section className="grid gap-3 rounded-sm border border-panel-border bg-panel-deep p-3">
+            <h3 className="m-0 text-copy-primary text-xs font-semibold">Release</h3>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className="grid gap-1.5 font-medium text-copy-secondary text-xs">
+                Report version
+                <input
+                  className="h-9 rounded-sm border border-panel-border bg-panel-deep px-2.5 text-copy-primary text-sm outline-none focus:border-accent"
+                  value={releaseVersion}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    setReleaseVersion(value);
+                    if (normalizeReleaseVersion(value) !== "1.0") setIncludeReleaseHistory(true);
+                  }}
+                  placeholder="1.0"
+                  maxLength={17}
+                  disabled={busy}
+                />
+              </label>
+              <div className="grid gap-1.5">
+                <span className="font-medium text-copy-secondary text-xs">Publication status</span>
+                <ToggleGroup
+                  className="export-format-group"
+                  aria-label="Publication status"
+                  value={[publicationStatus]}
+                  onValueChange={(value) => {
+                    const next = value[0];
+                    if (next === "draft" || next === "final") setPublicationStatus(next);
+                  }}
                 >
-                  <span id={`page-furniture-${key}`}>{label}</span>
+                  <Toggle className="export-format-option" value="draft" disabled={busy}>
+                    Draft
+                  </Toggle>
+                  <Toggle className="export-format-option" value="final" disabled={busy}>
+                    Final
+                  </Toggle>
+                </ToggleGroup>
+              </div>
+            </div>
+            {normalizeReleaseVersion(releaseVersion) !== "1.0" ? (
+              <div className="grid gap-3 border-panel-border border-t pt-3">
+                <label className="grid gap-1.5 font-medium text-copy-secondary text-xs">
+                  What changed
+                  <textarea
+                    className="min-h-20 resize-y rounded-sm border border-panel-border bg-panel-base px-2.5 py-2 text-copy-primary text-sm outline-none focus:border-accent"
+                    value={changeNote}
+                    onChange={(event) => setChangeNote(event.currentTarget.value)}
+                    maxLength={2_000}
+                    required
+                    disabled={busy}
+                  />
+                </label>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="m-0 font-medium text-copy-secondary text-xs">
+                      Include release history
+                    </p>
+                    <p className="mt-1 mb-0 text-copy-faint text-xs">
+                      Place the version table before the table of contents.
+                    </p>
+                  </div>
                   <Switch.Root
                     nativeButton
                     render={<button type="button" />}
-                    checked={pageFurniture[key]}
-                    onCheckedChange={(checked) =>
-                      setPageFurniture((current) => ({ ...current, [key]: checked }))
-                    }
+                    checked={includeReleaseHistory}
+                    onCheckedChange={setIncludeReleaseHistory}
                     className="settings-switch"
-                    aria-label={`Include ${label.toLocaleLowerCase("en")}`}
+                    aria-label="Include release history"
                     disabled={busy}
                   >
                     <Switch.Thumb className="settings-switch-thumb" />
                   </Switch.Root>
                 </div>
-              ))}
-            </div>
-          </fieldset>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <PublicationSelectionList
-              emptyLabel="This report has no selectable body sections."
-              label="Included sections"
-              onChange={setIncludedSections}
-              options={sections}
-              selected={includedSections}
-            />
-            <PublicationSelectionList
-              emptyLabel="No evidence appendices are currently attached."
-              label="Included appendices"
-              onChange={setIncludedAppendices}
-              options={appendices}
-              selected={includedAppendices}
-            />
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              </div>
+            ) : null}
+          </section>
+          <section className="grid gap-3 rounded-sm border border-panel-border bg-panel-deep p-3">
+            <h3 className="m-0 text-copy-primary text-xs font-semibold">Output</h3>
             <label className="grid gap-1.5 font-medium text-copy-secondary text-xs">
-              Report version
-              <input
-                className="h-9 rounded-sm border border-panel-border bg-panel-deep px-2.5 text-copy-primary text-sm outline-none focus:border-accent"
-                value={releaseVersion}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
-                  setReleaseVersion(value);
-                  if (normalizeReleaseVersion(value) !== "1.0") setIncludeReleaseHistory(true);
-                }}
-                placeholder="1.0"
-                maxLength={17}
-                disabled={busy}
-              />
-            </label>
-            <div className="grid gap-1.5">
-              <span className="font-medium text-copy-secondary text-xs">Publication status</span>
-              <ToggleGroup
-                className="export-format-group"
-                aria-label="Publication status"
-                value={[publicationStatus]}
-                onValueChange={(value) => {
-                  const next = value[0];
-                  if (next === "draft" || next === "final") setPublicationStatus(next);
-                }}
-              >
-                <Toggle className="export-format-option" value="draft" disabled={busy}>
-                  Draft
-                </Toggle>
-                <Toggle className="export-format-option" value="final" disabled={busy}>
-                  Final
-                </Toggle>
-              </ToggleGroup>
-            </div>
-          </div>
-          {normalizeReleaseVersion(releaseVersion) !== "1.0" ? (
-            <div className="grid gap-3 rounded-sm border border-panel-border bg-panel-deep p-3">
-              <label className="grid gap-1.5 font-medium text-copy-secondary text-xs">
-                What changed
-                <textarea
-                  className="min-h-20 resize-y rounded-sm border border-panel-border bg-panel-base px-2.5 py-2 text-copy-primary text-sm outline-none focus:border-accent"
-                  value={changeNote}
-                  onChange={(event) => setChangeNote(event.currentTarget.value)}
-                  maxLength={2_000}
-                  required
+              File name
+              <span className="flex min-w-0 items-center rounded-sm border border-panel-border bg-panel-base focus-within:border-accent">
+                <input
+                  className="h-9 min-w-0 flex-1 bg-transparent px-2.5 text-copy-primary text-sm outline-none"
+                  type="text"
+                  value={fileName}
+                  onChange={(event) => setFileName(event.currentTarget.value)}
+                  maxLength={96}
+                  autoComplete="off"
                   disabled={busy}
                 />
-              </label>
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="m-0 font-medium text-copy-secondary text-xs">
-                    Include release history
-                  </p>
-                  <p className="mt-1 mb-0 text-copy-faint text-xs">
-                    Place the version table before the table of contents.
-                  </p>
-                </div>
-                <Switch.Root
-                  nativeButton
-                  render={<button type="button" />}
-                  checked={includeReleaseHistory}
-                  onCheckedChange={setIncludeReleaseHistory}
-                  className="settings-switch"
-                  aria-label="Include release history"
-                  disabled={busy}
-                >
-                  <Switch.Thumb className="settings-switch-thumb" />
-                </Switch.Root>
-              </div>
-            </div>
-          ) : null}
-          <label className="grid gap-1.5 font-medium text-copy-secondary text-xs">
-            File name
-            <span className="flex min-w-0 items-center rounded-sm border border-panel-border bg-panel-deep focus-within:border-accent">
-              <input
-                className="h-9 min-w-0 flex-1 bg-transparent px-2.5 text-copy-primary text-sm outline-none"
-                type="text"
-                value={fileName}
-                onChange={(event) => setFileName(event.currentTarget.value)}
-                maxLength={96}
-                autoComplete="off"
-                disabled={busy}
-              />
-              <span className="shrink-0 pr-2.5 text-copy-muted text-xs" aria-hidden="true">
-                .{format}
+                <span className="shrink-0 pr-2.5 text-copy-muted text-xs" aria-hidden="true">
+                  .{format}
+                </span>
               </span>
-            </span>
-          </label>
+            </label>
+          </section>
           <div className="flex justify-end gap-2 border-panel-border border-t pt-3">
             <Dialog.Close render={<Button className="control-button" />} disabled={busy}>
               Cancel
@@ -554,49 +525,6 @@ export function PublicationDialog({
         </form>
       </DialogFrame>
     </Dialog.Root>
-  );
-}
-
-function PublicationSelectionList({
-  emptyLabel,
-  label,
-  onChange,
-  options,
-  selected,
-}: {
-  emptyLabel: string;
-  label: string;
-  onChange: (keys: string[]) => void;
-  options: readonly PublicationSelectionOption[];
-  selected: readonly string[];
-}) {
-  return (
-    <fieldset className="grid content-start gap-2 rounded-sm border border-panel-border bg-panel-deep p-3">
-      <legend className="px-1 font-medium text-copy-secondary text-xs">{label}</legend>
-      {options.length === 0 ? <p className="m-0 text-copy-faint text-xs">{emptyLabel}</p> : null}
-      {options.map((option) => (
-        <div
-          className="flex items-start justify-between gap-3 text-copy-secondary text-xs"
-          key={option.key}
-        >
-          <span id={`publication-option-${option.key}`}>{option.label}</span>
-          <Switch.Root
-            nativeButton
-            render={<button type="button" />}
-            checked={selected.includes(option.key)}
-            onCheckedChange={(checked) =>
-              onChange(
-                checked ? [...selected, option.key] : selected.filter((key) => key !== option.key),
-              )
-            }
-            className="settings-switch"
-            aria-label={`Include ${option.label}`}
-          >
-            <Switch.Thumb className="settings-switch-thumb" />
-          </Switch.Root>
-        </div>
-      ))}
-    </fieldset>
   );
 }
 
@@ -620,7 +548,5 @@ function normalizeReleaseVersion(value: string): string | null {
 }
 
 function publicationSourceId(record: PublicationRecord): string {
-  return record.snapshot.source.type === "freeform_document"
-    ? record.snapshot.source.document_id
-    : record.snapshot.source.report_id;
+  return record.snapshot.source.document_id;
 }

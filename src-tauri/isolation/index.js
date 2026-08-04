@@ -1,7 +1,7 @@
 (function installSheutIsolationHook() {
   const canonicalId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-  const documentKinds = new Set(["investigation", "analyst_note"]);
-  const exportFormats = new Set(["html", "pdf", "docx"]);
+  const documentKinds = new Set(["investigation", "analyst_note", "report"]);
+  const exportFormats = new Set(["pdf"]);
   const paperSizes = new Set(["a4", "letter"]);
   const pageOrientations = new Set(["portrait", "landscape"]);
   const publicationStatuses = new Set(["draft", "final"]);
@@ -23,13 +23,6 @@
   const analyticConfidence = new Set(["low", "medium", "high"]);
   const graphModes = new Set(["view", "build"]);
   const graphItemKinds = new Set(["intelligence", "evidence", "document", "catalog_reference"]);
-  const reportReferenceKinds = new Set([
-    "intelligence",
-    "evidence",
-    "document",
-    "catalog_reference",
-  ]);
-  const reportSectionDispositions = new Set(["active", "not_applicable"]);
   const telemetryEventNames = new Set([
     "application_started",
     "project_created",
@@ -83,14 +76,23 @@
       const codePoint = character.codePointAt(0);
       return codePoint !== undefined && codePoint >= 32 && codePoint !== 127;
     });
-  const isReportTitle = (value) =>
-    typeof value === "string" &&
-    value.trim().length > 0 &&
-    Array.from(value.trim()).length <= 240 &&
-    Array.from(value).every((character) => {
-      const codePoint = character.codePointAt(0);
-      return codePoint !== undefined && codePoint >= 32 && codePoint !== 127;
-    });
+  const isReportProperties = (value) =>
+    isRecord(value) &&
+    typeof value.reportId === "string" &&
+    /^RPT-\d{4,}$/.test(value.reportId) &&
+    isBoundedString(value.title, 1, 200) &&
+    Array.isArray(value.authors) &&
+    value.authors.length <= 32 &&
+    value.authors.every(
+      (author) =>
+        isRecord(author) &&
+        isBoundedString(author.name, 1, 120) &&
+        (author.role === undefined || isBoundedString(author.role, 1, 120)),
+    ) &&
+    (value.producingOrganisation === undefined ||
+      isBoundedString(value.producingOrganisation, 1, 200)) &&
+    typeof value.issueDate === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(value.issueDate);
   const isLayerName = (value) =>
     typeof value === "string" &&
     value.trim().length > 0 &&
@@ -132,57 +134,6 @@
     value.tags.length <= 32 &&
     value.tags.every((tag) => isBoundedString(tag, 1, 64)) &&
     isEvidenceText(value.analystNotes, 100_000);
-  const isGuidedReportFields = (fields) => {
-    if (!isRecord(fields) || Object.keys(fields).length === 0 || Object.keys(fields).length > 256) {
-      return false;
-    }
-    for (const [key, field] of Object.entries(fields)) {
-      if (!/^[a-z][a-z0-9_]{0,63}$/.test(key) || !isRecord(field)) return false;
-      if (field.type === "text") {
-        if (typeof field.value !== "string" || Array.from(field.value).length > 100_000) {
-          return false;
-        }
-      } else if (field.type === "narrative") {
-        if (!isRecord(field.value) || field.value.type !== "doc") return false;
-      } else if (field.type === "rows") {
-        if (!Array.isArray(field.value) || field.value.length > 2_000) return false;
-        for (const row of field.value) {
-          if (!isRecord(row) || Object.keys(row).length > 64) return false;
-          for (const [column, value] of Object.entries(row)) {
-            if (
-              Array.from(column).length === 0 ||
-              Array.from(column).length > 80 ||
-              typeof value !== "string" ||
-              Array.from(value).length > 100_000
-            ) {
-              return false;
-            }
-          }
-        }
-      } else if (field.type === "project_references") {
-        if (!Array.isArray(field.value) || field.value.length > 256) return false;
-        for (const reference of field.value) {
-          if (
-            !isRecord(reference) ||
-            !reportReferenceKinds.has(reference.kind) ||
-            !isId(reference.id) ||
-            typeof reference.label !== "string" ||
-            Array.from(reference.label).length === 0 ||
-            Array.from(reference.label).length > 500
-          ) {
-            return false;
-          }
-        }
-      } else {
-        return false;
-      }
-    }
-    try {
-      return utf8.encode(JSON.stringify(fields)).byteLength <= 1024 * 1024;
-    } catch {
-      return false;
-    }
-  };
   const isBrandProfileInput = (input) => {
     if (!isRecord(input)) return false;
     const text = (value, max) =>
@@ -372,6 +323,10 @@
       payload.items.length <= 5000 &&
       payload.items.every(isGraphItem),
     load_graph_workspace: (payload) => ids(payload, "projectId", "workspaceId"),
+    create_graph_snapshot_attachment: (payload) =>
+      ids(payload, "projectId", "documentId", "workspaceId") &&
+      Number.isSafeInteger(payload.expectedRevision) &&
+      payload.expectedRevision >= 1,
     rename_graph_workspace: (payload) =>
       ids(payload, "projectId", "workspaceId") &&
       Number.isSafeInteger(payload.expectedRevision) &&
@@ -517,37 +472,7 @@
     update_project_default_tlp: (payload) =>
       ids(payload, "projectId") && tlpMarkings.has(payload.marking),
     create_document: (payload) => ids(payload, "projectId") && documentKinds.has(payload.kind),
-    list_report_templates: (payload) => ids(payload, "projectId"),
-    create_custom_report_template: (payload) =>
-      ids(payload, "projectId", "baseTemplateId") &&
-      isBoundedString(payload.name, 1, 120) &&
-      isBoundedString(payload.description, 1, 500) &&
-      Array.isArray(payload.additionalSections) &&
-      payload.additionalSections.length <= 32 &&
-      utf8.encode(JSON.stringify(payload.additionalSections)).byteLength <= 256 * 1024,
-    list_guided_reports: (payload) => ids(payload, "projectId"),
     list_report_project_data: (payload) => ids(payload, "projectId"),
-    create_guided_report: (payload) => ids(payload, "projectId", "templateId"),
-    save_guided_report: (payload) =>
-      ids(payload, "projectId", "reportId") &&
-      Number.isSafeInteger(payload.expectedRevision) &&
-      payload.expectedRevision >= 1 &&
-      isReportTitle(payload.title) &&
-      isGuidedReportFields(payload.fields),
-    get_guided_report_readiness: (payload) => ids(payload, "projectId", "reportId"),
-    update_guided_report_section_disposition: (payload) =>
-      ids(payload, "projectId", "reportId") &&
-      Number.isSafeInteger(payload.expectedRevision) &&
-      payload.expectedRevision >= 1 &&
-      typeof payload.sectionKey === "string" &&
-      /^[a-z][a-z0-9_]{0,63}$/.test(payload.sectionKey) &&
-      reportSectionDispositions.has(payload.disposition),
-    upgrade_illicit_ecosystem_report: (payload) =>
-      ids(payload, "projectId", "reportId") &&
-      Number.isSafeInteger(payload.expectedRevision) &&
-      payload.expectedRevision >= 1,
-    delete_guided_report: (payload) => ids(payload, "projectId", "reportId"),
-    restore_guided_report: (payload) => ids(payload, "projectId", "reportId"),
     list_brand_profiles: (payload) => ids(payload, "projectId"),
     create_brand_profile: (payload) =>
       ids(payload, "projectId") && isBrandProfileInput(payload.input),
@@ -589,17 +514,6 @@
       isPublicationRelease(payload.options) &&
       isPublicationSelections(payload.options) &&
       isFileName(payload.options.fileName),
-    export_guided_report: (payload) =>
-      ids(payload, "projectId", "reportId") &&
-      isRecord(payload.options) &&
-      exportFormats.has(payload.options.format) &&
-      paperSizes.has(payload.options.paperSize) &&
-      pageOrientations.has(payload.options.orientation) &&
-      tlpMarkings.has(payload.options.tlpMarking) &&
-      isBrandProfileSelection(payload.options) &&
-      isPublicationRelease(payload.options) &&
-      isPublicationSelections(payload.options) &&
-      isFileName(payload.options.fileName),
     list_publication_records: (payload) => ids(payload, "projectId"),
     reproduce_publication: (payload) => ids(payload, "projectId", "publicationId"),
     pick_document_image: (payload) => ids(payload, "projectId", "documentId"),
@@ -630,7 +544,8 @@
         !Number.isSafeInteger(payload.expectedRevision) ||
         payload.expectedRevision < 1 ||
         !isRecord(payload.root) ||
-        payload.root.type !== "doc"
+        payload.root.type !== "doc" ||
+        (payload.reportProperties !== undefined && !isReportProperties(payload.reportProperties))
       ) {
         return false;
       }
@@ -640,7 +555,6 @@
         return false;
       }
     },
-    render_saved_document: (payload) => ids(payload, "projectId", "documentId"),
     unlock_project: (payload) => ids(payload, "projectId"),
     unlock_passphrase_project: passphraseProject,
     lock_project: (payload) => ids(payload, "projectId"),

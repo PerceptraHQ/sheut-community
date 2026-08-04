@@ -11,12 +11,8 @@ import {
 import { type ReactNode, useEffect, useState } from "react";
 import { listBrandProfiles } from "../lib/brand-profiles";
 import { listDocuments } from "../lib/documents";
+import { type EvidenceFileMetadata, listEvidenceFiles } from "../lib/evidence";
 import { listGraphWorkspaces } from "../lib/graph";
-import {
-  type EvidenceFileMetadata,
-  listEvidenceFiles,
-  listGuidedReports,
-} from "../lib/guided-reports";
 import type { SearchDestination } from "../lib/projectSearch";
 import type { ProjectSummary } from "../lib/projects";
 import { listStixDrafts, listStixObjects } from "../lib/stix";
@@ -45,7 +41,6 @@ export function ProjectOverview({ onNavigate, project }: ProjectOverviewProps) {
     let active = true;
     void Promise.allSettled([
       listDocuments(project.id),
-      listGuidedReports(project.id),
       listEvidenceFiles(project.id),
       listStixObjects(project.id),
       listStixDrafts(project.id),
@@ -53,10 +48,11 @@ export function ProjectOverview({ onNavigate, project }: ProjectOverviewProps) {
       listBrandProfiles(project.id),
     ]).then((results) => {
       if (!active) return;
-      const [documents, reports, evidence, objects, drafts, graphs, brands] = results;
+      const [documents, evidence, objects, drafts, graphs, brands] = results;
+      const documentValues = documents.status === "fulfilled" ? documents.value : [];
       setData({
-        documents: documents.status === "fulfilled" ? documents.value.length : 0,
-        reports: reports.status === "fulfilled" ? reports.value.length : 0,
+        documents: documentValues.filter((document) => document.kind !== "report").length,
+        reports: documentValues.filter((document) => document.kind === "report").length,
         evidence: evidence.status === "fulfilled" ? evidence.value : [],
         intelligence:
           (objects.status === "fulfilled" ? objects.value.length : 0) +
@@ -87,7 +83,7 @@ export function ProjectOverview({ onNavigate, project }: ProjectOverviewProps) {
 
   return (
     <section
-      className="mx-auto grid w-full max-w-6xl gap-5 px-6 py-6"
+      className="mx-auto grid w-full gap-5 px-6 py-6 xl:gap-6 xl:px-8 xl:py-7 2xl:px-10 2xl:py-8"
       aria-labelledby="project-title"
     >
       <header className="flex flex-wrap items-start justify-between gap-4 rounded-sm border border-panel-border bg-panel-base p-5">
@@ -118,7 +114,7 @@ export function ProjectOverview({ onNavigate, project }: ProjectOverviewProps) {
       <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-3">
         <OverviewCard
           icon={<IconFiles size={18} aria-hidden="true" />}
-          label={`${data.reports} guided ${data.reports === 1 ? "report" : "reports"}`}
+          label={`${data.reports} ${data.reports === 1 ? "report" : "reports"}`}
           detail={`${data.documents} freeform ${data.documents === 1 ? "document" : "documents"}`}
           actionLabel="Open Documents"
           onOpen={() => onNavigate("investigations")}

@@ -203,24 +203,6 @@ macro_rules! revisioned_payload_queries {
     };
 }
 
-revisioned_payload_queries!(
-    insert_guided_report,
-    update_guided_report,
-    insert_guided_report_revision,
-    load_guided_report,
-    list_guided_reports,
-    "guided_reports",
-    "guided_report_revisions",
-    "report_id",
-    "deleted_at_unix_ms"
-);
-
-pub(super) fn list_all_guided_reports(connection: &Connection) -> Result<Vec<Vec<u8>>> {
-    let mut statement = connection.prepare("SELECT payload FROM guided_reports ORDER BY id")?;
-    let rows = statement.query_map([], |row| row.get(0))?;
-    rows.collect()
-}
-
 pub(super) fn load_report_number_sequence(
     transaction: &Transaction<'_>,
     prefix: &str,
@@ -243,26 +225,6 @@ pub(super) fn upsert_report_number_sequence(
         "INSERT INTO report_number_sequences (prefix, next_value) VALUES (?1, ?2) \
          ON CONFLICT(prefix) DO UPDATE SET next_value = excluded.next_value",
         params![prefix, next_value],
-    )
-}
-
-pub(super) fn soft_delete_guided_report(
-    connection: &Connection,
-    id: &str,
-    deleted_at_unix_ms: i64,
-) -> Result<usize> {
-    connection.execute(
-        "UPDATE guided_reports SET deleted_at_unix_ms = ?2 \
-         WHERE id = ?1 AND deleted_at_unix_ms IS NULL",
-        params![id, deleted_at_unix_ms],
-    )
-}
-
-pub(super) fn restore_guided_report(connection: &Connection, id: &str) -> Result<usize> {
-    connection.execute(
-        "UPDATE guided_reports SET deleted_at_unix_ms = NULL \
-         WHERE id = ?1 AND deleted_at_unix_ms IS NOT NULL",
-        [id],
     )
 }
 
@@ -309,18 +271,6 @@ pub(super) fn load_brand_asset(
         )
         .optional()
 }
-
-revisioned_payload_queries!(
-    insert_report_template,
-    update_report_template,
-    insert_report_template_revision,
-    load_report_template,
-    list_report_templates,
-    "report_templates",
-    "report_template_revisions",
-    "template_id",
-    "archived_at_unix_ms"
-);
 
 pub(super) fn load_brand_profile_revision(
     connection: &Connection,
@@ -871,34 +821,6 @@ pub(super) fn load_document_revision_for_publication(
     connection
         .query_row(
             "SELECT payload FROM document_revisions WHERE document_id = ?1 AND revision = ?2",
-            params![id, revision],
-            |row| row.get(0),
-        )
-        .optional()
-}
-
-pub(super) fn load_guided_report_revision(
-    connection: &Connection,
-    id: &str,
-    revision: i64,
-) -> Result<Option<Vec<u8>>> {
-    connection
-        .query_row(
-            "SELECT payload FROM guided_report_revisions WHERE report_id = ?1 AND revision = ?2",
-            params![id, revision],
-            |row| row.get(0),
-        )
-        .optional()
-}
-
-pub(super) fn load_report_template_revision(
-    connection: &Connection,
-    id: &str,
-    revision: i64,
-) -> Result<Option<Vec<u8>>> {
-    connection
-        .query_row(
-            "SELECT payload FROM report_template_revisions WHERE template_id = ?1 AND revision = ?2",
             params![id, revision],
             |row| row.get(0),
         )

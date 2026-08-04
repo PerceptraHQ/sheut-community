@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 //! Shared domain contracts and bounded validators for Sheut's trusted Rust boundary.
-//! Structured documents remain versioned data; derived HTML is never their source of truth.
+//! Structured documents remain versioned data; only typed projections leave the domain boundary.
 
 use std::{error::Error, fmt, io::Cursor, num::NonZeroU64};
 
@@ -20,6 +20,8 @@ const MAX_RELATIONSHIP_TYPE_CHARS: usize = 64;
 const MAX_DOCUMENT_BYTES: usize = 1024 * 1024;
 const MAX_DOCUMENT_DEPTH: usize = 64;
 const MAX_DOCUMENT_NODES: usize = 20_000;
+const MAX_REPORT_TITLE_CHARS: usize = 200;
+const MAX_REPORT_AUTHORS: usize = 32;
 const MAX_LINK_CHARS: usize = 2_048;
 const MAX_ATTACHMENT_FILE_NAME_CHARS: usize = 255;
 const MAX_ATTACHMENT_TEXT_CHARS: usize = 500;
@@ -55,8 +57,7 @@ pub enum DomainErrorCode {
     InvalidRelationshipType,
     InvalidCatalogReference,
     InvalidTechniqueObservation,
-    InvalidGuidedReport,
-    InvalidReportTemplate,
+    InvalidReportProperties,
     InvalidBrandProfile,
     InvalidPublication,
 }
@@ -439,6 +440,185 @@ pub struct DocumentEnvelope {
     kind: DocumentKind,
     revision: Revision,
     root: Value,
+    #[serde(rename = "reportProperties", skip_serializing_if = "Option::is_none")]
+    report_properties: Option<ReportProperties>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportAuthor {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ReportAuthorWire {
+    name: String,
+    role: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for ReportAuthor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = ReportAuthorWire::deserialize(deserializer)?;
+        Self::new(&wire.name, wire.role.as_deref()).map_err(serde::de::Error::custom)
+    }
+}
+
+impl ReportAuthor {
+    pub fn new(name: impl AsRef<str>, role: Option<&str>) -> Result<Self, DomainError> {
+        let code = DomainErrorCode::InvalidReportProperties;
+        let name = bounded_text(name.as_ref(), MAX_NAME_CHARS, code)?;
+        let role = role
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| bounded_text(value, MAX_NAME_CHARS, code))
+            .transpose()?;
+        Ok(Self { name, role })
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[must_use]
+    pub fn role(&self) -> Option<&str> {
+        self.role.as_deref()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportProperties {
+    report_id: String,
+    title: String,
+    authors: Vec<ReportAuthor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    producing_organisation: Option<String>,
+    issue_date: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReportPropertiesWire {
+    report_id: String,
+    title: String,
+    authors: Vec<ReportAuthor>,
+    producing_organisation: Option<String>,
+    issue_date: String,
+}
+
+impl<'de> Deserialize<'de> for ReportProperties {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let wire = ReportPropertiesWire::deserialize(deserializer)?;
+        Self::new(
+            &wire.report_id,
+            &wire.title,
+            wire.authors,
+            wire.producing_organisation.as_deref(),
+            &wire.issue_date,
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+impl ReportProperties {
+    pub fn new(
+        report_id: impl AsRef<str>,
+        title: impl AsRef<str>,
+        authors: Vec<ReportAuthor>,
+        producing_organisation: Option<&str>,
+        issue_date: impl AsRef<str>,
+    ) -> Result<Self, DomainError> {
+        let code = DomainErrorCode::InvalidReportProperties;
+        let report_id = report_id.as_ref().trim();
+        let suffix = report_id
+            .strip_prefix("RPT-")
+            .ok_or_else(|| DomainError::new(code))?;
+        if suffix.len() < 4 || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(DomainError::new(code));
+        }
+        if authors.len() > MAX_REPORT_AUTHORS {
+            return Err(DomainError::new(code));
+        }
+        let title = bounded_text(title.as_ref(), MAX_REPORT_TITLE_CHARS, code)?;
+        let producing_organisation = producing_organisation
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| bounded_text(value, MAX_REPORT_TITLE_CHARS, code))
+            .transpose()?;
+        let issue_date = issue_date.as_ref().trim();
+        if !valid_iso_date(issue_date) {
+            return Err(DomainError::new(code));
+        }
+        Ok(Self {
+            report_id: report_id.to_owned(),
+            title,
+            authors,
+            producing_organisation,
+            issue_date: issue_date.to_owned(),
+        })
+    }
+
+    #[must_use]
+    pub fn report_id(&self) -> &str {
+        &self.report_id
+    }
+
+    #[must_use]
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    #[must_use]
+    pub fn authors(&self) -> &[ReportAuthor] {
+        &self.authors
+    }
+
+    #[must_use]
+    pub fn producing_organisation(&self) -> Option<&str> {
+        self.producing_organisation.as_deref()
+    }
+
+    #[must_use]
+    pub fn issue_date(&self) -> &str {
+        &self.issue_date
+    }
+}
+
+fn valid_iso_date(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 10 || bytes[4] != b'-' || bytes[7] != b'-' {
+        return false;
+    }
+    let parse = |range: std::ops::Range<usize>| {
+        std::str::from_utf8(&bytes[range]).ok()?.parse::<u32>().ok()
+    };
+    let Some(year) = parse(0..4) else {
+        return false;
+    };
+    let Some(month) = parse(5..7) else {
+        return false;
+    };
+    let Some(day) = parse(8..10) else {
+        return false;
+    };
+    let leap = year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let days = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return false,
+    };
+    year > 0 && (1..=days).contains(&day)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -524,7 +704,6 @@ pub fn detect_evidence_media_type(
         .unwrap_or_default();
     if is_zip_container(bytes) {
         return Ok(match extension.as_str() {
-            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             _ => "application/zip",
@@ -719,6 +898,8 @@ struct DocumentEnvelopeWire {
     kind: DocumentKind,
     revision: Revision,
     root: Value,
+    #[serde(rename = "reportProperties", default)]
+    report_properties: Option<ReportProperties>,
 }
 
 impl<'de> Deserialize<'de> for DocumentEnvelope {
@@ -732,7 +913,14 @@ impl<'de> Deserialize<'de> for DocumentEnvelope {
                 DomainErrorCode::InvalidDocument,
             )));
         }
-        Self::new(wire.id, wire.kind, wire.revision, wire.root).map_err(serde::de::Error::custom)
+        Self::new_with_report_properties(
+            wire.id,
+            wire.kind,
+            wire.revision,
+            wire.root,
+            wire.report_properties,
+        )
+        .map_err(serde::de::Error::custom)
     }
 }
 
@@ -743,13 +931,42 @@ impl DocumentEnvelope {
         revision: Revision,
         root: Value,
     ) -> Result<Self, DomainError> {
+        Self::new_with_report_properties(id, kind, revision, root, None)
+    }
+
+    pub fn new_report(
+        id: LocalId,
+        revision: Revision,
+        root: Value,
+        report_properties: ReportProperties,
+    ) -> Result<Self, DomainError> {
+        Self::new_with_report_properties(
+            id,
+            DocumentKind::Report,
+            revision,
+            root,
+            Some(report_properties),
+        )
+    }
+
+    pub fn new_with_report_properties(
+        id: LocalId,
+        kind: DocumentKind,
+        revision: Revision,
+        root: Value,
+        report_properties: Option<ReportProperties>,
+    ) -> Result<Self, DomainError> {
         validate_document_root(&root)?;
+        if kind != DocumentKind::Report && report_properties.is_some() {
+            return Err(DomainError::new(DomainErrorCode::InvalidReportProperties));
+        }
         Ok(Self {
             schema_version: 1,
             id,
             kind,
             revision,
             root,
+            report_properties,
         })
     }
 
@@ -777,39 +994,21 @@ impl DocumentEnvelope {
     pub fn root(&self) -> &Value {
         &self.root
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RenderedDocument {
-    html: String,
-    plain_text: String,
-}
-
-impl RenderedDocument {
-    #[must_use]
-    pub fn html(&self) -> &str {
-        &self.html
-    }
 
     #[must_use]
-    pub fn plain_text(&self) -> &str {
-        &self.plain_text
+    pub const fn report_properties(&self) -> Option<&ReportProperties> {
+        self.report_properties.as_ref()
     }
 }
 
 #[must_use]
-pub fn render_document(document: &DocumentEnvelope) -> RenderedDocument {
-    let mut html = String::new();
-    render_html_node(document.root(), &mut html);
-
+pub fn document_plain_text(document: &DocumentEnvelope) -> String {
     let mut plain_text = String::new();
     render_plain_text_node(document.root(), &mut plain_text);
     while plain_text.ends_with('\n') {
         plain_text.pop();
     }
-
-    RenderedDocument { html, plain_text }
+    plain_text
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -888,7 +1087,10 @@ fn validate_document_node(
             validate_task_item(object.get("attrs"))?;
             DocumentContent::Block
         }
-        "table" if expected == DocumentContent::Block => DocumentContent::TableRow,
+        "table" if expected == DocumentContent::Block => {
+            validate_table(object.get("attrs"))?;
+            DocumentContent::TableRow
+        }
         "tableRow" if expected == DocumentContent::TableRow => DocumentContent::TableCell,
         "tableCell" | "tableHeader" if expected == DocumentContent::TableCell => {
             validate_table_cell(object.get("attrs"))?;
@@ -899,12 +1101,32 @@ fn validate_document_node(
             reject_content(object)?;
             return Ok(());
         }
+        "pageBreak" if expected == DocumentContent::Block => {
+            reject_content(object)?;
+            return Ok(());
+        }
         "imageAttachment" if expected == DocumentContent::Block => {
             validate_image_reference(object, "attachmentId")?;
             return Ok(());
         }
         "evidenceImage" if expected == DocumentContent::Block => {
             validate_image_reference(object, "evidenceId")?;
+            return Ok(());
+        }
+        "graphSnapshot" if expected == DocumentContent::Block => {
+            validate_graph_snapshot(object)?;
+            return Ok(());
+        }
+        "evidenceCitation" if expected == DocumentContent::Inline => {
+            validate_evidence_citation(object)?;
+            return Ok(());
+        }
+        "projectReference" if expected == DocumentContent::Inline => {
+            validate_project_reference(object)?;
+            return Ok(());
+        }
+        "mitreSnapshot" if expected == DocumentContent::Block => {
+            validate_mitre_snapshot(object)?;
             return Ok(());
         }
         "hardBreak" if expected == DocumentContent::Inline => {
@@ -1028,6 +1250,204 @@ fn validate_attachment_text(value: Option<&Value>, nullable: bool) -> Result<(),
     Ok(())
 }
 
+fn validate_evidence_citation(object: &serde_json::Map<String, Value>) -> Result<(), DomainError> {
+    reject_content(object)?;
+    let attrs = object
+        .get("attrs")
+        .and_then(Value::as_object)
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    if attrs.keys().any(|name| {
+        !matches!(
+            name.as_str(),
+            "evidenceId" | "revision" | "label" | "fileName" | "mediaType" | "sha256"
+        )
+    }) {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    let evidence_id = attrs
+        .get("evidenceId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    LocalId::parse(evidence_id).map_err(|_| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    if !attrs
+        .get("revision")
+        .and_then(Value::as_u64)
+        .is_some_and(|revision| revision > 0)
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    for field in ["label", "fileName", "mediaType"] {
+        validate_attachment_text(attrs.get(field), false)?;
+    }
+    let sha256 = attrs
+        .get("sha256")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    if sha256.len() != 64 || !sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    Ok(())
+}
+
+fn validate_project_reference(object: &serde_json::Map<String, Value>) -> Result<(), DomainError> {
+    reject_content(object)?;
+    let attrs = object
+        .get("attrs")
+        .and_then(Value::as_object)
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    if attrs.len() != 6
+        || attrs.keys().any(|name| {
+            !matches!(
+                name.as_str(),
+                "sourceKind" | "sourceId" | "sourceVersion" | "display" | "label" | "snapshot"
+            )
+        })
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    if !attrs
+        .get("sourceKind")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| matches!(kind, "intelligence" | "evidence" | "document"))
+        || !attrs
+            .get("display")
+            .and_then(Value::as_str)
+            .is_some_and(|display| matches!(display, "inline" | "block"))
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    let source_id = attrs
+        .get("sourceId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    LocalId::parse(source_id).map_err(|_| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    validate_attachment_text(attrs.get("label"), false)?;
+    validate_attachment_text(attrs.get("sourceVersion"), true)?;
+    validate_frozen_snapshot(attrs.get("snapshot"))
+}
+
+fn validate_graph_snapshot(object: &serde_json::Map<String, Value>) -> Result<(), DomainError> {
+    reject_content(object)?;
+    let attrs = object
+        .get("attrs")
+        .and_then(Value::as_object)
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    if attrs.len() != 7
+        || attrs.keys().any(|name| {
+            !matches!(
+                name.as_str(),
+                "attachmentId"
+                    | "workspaceId"
+                    | "workspaceRevision"
+                    | "workspaceName"
+                    | "placement"
+                    | "alt"
+                    | "title"
+            )
+        })
+        || !attrs
+            .get("workspaceRevision")
+            .and_then(Value::as_u64)
+            .is_some_and(|revision| revision > 0)
+        || !attrs
+            .get("placement")
+            .and_then(Value::as_str)
+            .is_some_and(|placement| matches!(placement, "inline" | "appendix"))
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    for field in ["attachmentId", "workspaceId"] {
+        let id = attrs
+            .get(field)
+            .and_then(Value::as_str)
+            .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+        LocalId::parse(id).map_err(|_| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    }
+    for field in ["workspaceName", "alt", "title"] {
+        validate_attachment_text(attrs.get(field), false)?;
+    }
+    Ok(())
+}
+
+fn validate_frozen_snapshot(value: Option<&Value>) -> Result<(), DomainError> {
+    let snapshot = value
+        .and_then(Value::as_object)
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    if snapshot.len() > 32
+        || snapshot.iter().any(|(name, value)| {
+            name.is_empty()
+                || name.len() > 64
+                || !name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+                || value
+                    .as_str()
+                    .is_none_or(|text| text.chars().count() > MAX_ATTACHMENT_TEXT_CHARS)
+        })
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    Ok(())
+}
+
+fn validate_mitre_snapshot(object: &serde_json::Map<String, Value>) -> Result<(), DomainError> {
+    reject_content(object)?;
+    let attrs = object
+        .get("attrs")
+        .and_then(Value::as_object)
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    if attrs.len() != 1 {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    let observations = attrs
+        .get("observations")
+        .and_then(Value::as_array)
+        .filter(|observations| (1..=50).contains(&observations.len()))
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    for observation in observations {
+        let observation = observation
+            .as_object()
+            .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+        if observation.len() != 7
+            || observation.keys().any(|name| {
+                !matches!(
+                    name.as_str(),
+                    "observationId"
+                        | "revision"
+                        | "catalog"
+                        | "catalogVersion"
+                        | "techniqueId"
+                        | "techniqueName"
+                        | "explanation"
+                )
+            })
+            || !observation
+                .get("revision")
+                .and_then(Value::as_u64)
+                .is_some_and(|revision| revision > 0)
+        {
+            return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+        }
+        let observation_id = observation
+            .get("observationId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+        LocalId::parse(observation_id)
+            .map_err(|_| DomainError::new(DomainErrorCode::InvalidDocument))?;
+        for field in ["catalog", "catalogVersion", "techniqueId", "techniqueName"] {
+            validate_attachment_text(observation.get(field), false)?;
+        }
+        let explanation = observation
+            .get("explanation")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+        if explanation.chars().count() > 4_000 || explanation.contains('\0') {
+            return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+        }
+    }
+    Ok(())
+}
+
 fn validate_table_cell(attrs: Option<&Value>) -> Result<(), DomainError> {
     let Some(attrs) = attrs else {
         return Ok(());
@@ -1035,6 +1455,19 @@ fn validate_table_cell(attrs: Option<&Value>) -> Result<(), DomainError> {
     let attrs = attrs
         .as_object()
         .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    if attrs
+        .keys()
+        .any(|name| !matches!(name.as_str(), "colspan" | "rowspan" | "colwidth" | "align"))
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    if let Some(alignment) = attrs.get("align").filter(|value| !value.is_null())
+        && !alignment
+            .as_str()
+            .is_some_and(|value| matches!(value, "left" | "center" | "right"))
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
     for name in ["colspan", "rowspan"] {
         let Some(span) = attrs.get(name) else {
             continue;
@@ -1064,21 +1497,42 @@ fn validate_table_cell(attrs: Option<&Value>) -> Result<(), DomainError> {
     Ok(())
 }
 
+fn validate_table(attrs: Option<&Value>) -> Result<(), DomainError> {
+    let Some(attrs) = attrs else {
+        return Ok(());
+    };
+    let attrs = attrs
+        .as_object()
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    if attrs.len() != 1
+        || !attrs
+            .get("layout")
+            .and_then(Value::as_str)
+            .is_some_and(|layout| matches!(layout, "fit-page" | "landscape-page"))
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    Ok(())
+}
+
 fn validate_heading(attrs: Option<&Value>) -> Result<(), DomainError> {
     let attrs = attrs
         .and_then(Value::as_object)
         .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
-    if attrs
-        .keys()
-        .any(|name| !matches!(name.as_str(), "level" | "textAlign"))
-    {
+    if attrs.keys().any(|name| {
+        !matches!(
+            name.as_str(),
+            "level" | "textAlign" | "lineSpacing" | "paragraphSpacing"
+        )
+    }) {
         return Err(DomainError::new(DomainErrorCode::InvalidDocument));
     }
     let level = attrs.get("level").and_then(Value::as_u64);
     if !matches!(level, Some(1..=3)) {
         return Err(DomainError::new(DomainErrorCode::InvalidDocument));
     }
-    validate_text_alignment(attrs.get("textAlign"))
+    validate_text_alignment(attrs.get("textAlign"))?;
+    validate_paragraph_spacing(attrs)
 }
 
 fn validate_paragraph(attrs: Option<&Value>) -> Result<(), DomainError> {
@@ -1088,10 +1542,38 @@ fn validate_paragraph(attrs: Option<&Value>) -> Result<(), DomainError> {
     let attrs = attrs
         .as_object()
         .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
-    if attrs.keys().any(|name| name != "textAlign") {
+    if attrs.keys().any(|name| {
+        !matches!(
+            name.as_str(),
+            "textAlign" | "lineSpacing" | "paragraphSpacing"
+        )
+    }) {
         return Err(DomainError::new(DomainErrorCode::InvalidDocument));
     }
-    validate_text_alignment(attrs.get("textAlign"))
+    validate_text_alignment(attrs.get("textAlign"))?;
+    validate_paragraph_spacing(attrs)
+}
+
+fn validate_paragraph_spacing(attrs: &serde_json::Map<String, Value>) -> Result<(), DomainError> {
+    if let Some(value) = attrs.get("lineSpacing").filter(|value| !value.is_null())
+        && !value.as_f64().is_some_and(|spacing| {
+            [1.0, 1.15, 1.5, 2.0]
+                .iter()
+                .any(|allowed| f64::abs(spacing - allowed) < 0.001)
+        })
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    if let Some(value) = attrs
+        .get("paragraphSpacing")
+        .filter(|value| !value.is_null())
+        && !value
+            .as_u64()
+            .is_some_and(|spacing| matches!(spacing, 0 | 6 | 12 | 18))
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    Ok(())
 }
 
 fn validate_text_alignment(value: Option<&Value>) -> Result<(), DomainError> {
@@ -1179,8 +1661,49 @@ fn validate_mark(mark: &Value) -> Result<(), DomainError> {
                 Err(DomainError::new(DomainErrorCode::InvalidDocument))
             }
         }
+        "textStyle" => validate_text_style_mark(mark.get("attrs")),
         _ => Err(DomainError::new(DomainErrorCode::InvalidDocument)),
     }
+}
+
+fn validate_text_style_mark(attrs: Option<&Value>) -> Result<(), DomainError> {
+    let attrs = attrs
+        .and_then(Value::as_object)
+        .ok_or_else(|| DomainError::new(DomainErrorCode::InvalidDocument))?;
+    if attrs
+        .keys()
+        .any(|name| !matches!(name.as_str(), "fontFamily" | "fontSize" | "color"))
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    if let Some(value) = attrs.get("fontFamily").filter(|value| !value.is_null())
+        && !value
+            .as_str()
+            .is_some_and(|font| matches!(font, "geist" | "source_serif_4" | "geist_mono"))
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    if let Some(value) = attrs.get("fontSize").filter(|value| !value.is_null())
+        && !value
+            .as_u64()
+            .is_some_and(|size| matches!(size, 9 | 10 | 11 | 12 | 14 | 18 | 24 | 32))
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    if let Some(value) = attrs.get("color").filter(|value| !value.is_null())
+        && !value.as_str().is_some_and(|color| {
+            matches!(
+                color,
+                "#17202b" | "#0b1320" | "#004b76" | "#7a1f1f" | "#315a3c"
+            )
+        })
+    {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    if attrs.values().all(Value::is_null) {
+        return Err(DomainError::new(DomainErrorCode::InvalidDocument));
+    }
+    Ok(())
 }
 
 fn reject_content(object: &serde_json::Map<String, Value>) -> Result<(), DomainError> {
@@ -1189,244 +1712,6 @@ fn reject_content(object: &serde_json::Map<String, Value>) -> Result<(), DomainE
     } else {
         Ok(())
     }
-}
-
-fn render_html_node(node: &Value, output: &mut String) {
-    let Some(object) = node.as_object() else {
-        return;
-    };
-    let Some(node_type) = object.get("type").and_then(Value::as_str) else {
-        return;
-    };
-
-    match node_type {
-        "doc" => render_html_children(object, output),
-        "paragraph" => render_html_text_block("p", object, output),
-        "heading" => {
-            let level = object
-                .get("attrs")
-                .and_then(Value::as_object)
-                .and_then(|attrs| attrs.get("level"))
-                .and_then(Value::as_u64)
-                .unwrap_or(1);
-            let tag = format!("h{level}");
-            render_html_text_block(&tag, object, output);
-        }
-        "blockquote" => render_html_element("blockquote", object, output),
-        "callout" => {
-            let tone = object
-                .get("attrs")
-                .and_then(Value::as_object)
-                .and_then(|attrs| attrs.get("tone"))
-                .and_then(Value::as_str)
-                .unwrap_or("info");
-            output.push_str("<aside data-sheut-callout=\"");
-            output.push_str(tone);
-            output.push_str("\">");
-            render_html_children(object, output);
-            output.push_str("</aside>");
-        }
-        "bulletList" => render_html_element("ul", object, output),
-        "taskList" => {
-            output.push_str("<ul data-type=\"taskList\">");
-            render_html_children(object, output);
-            output.push_str("</ul>");
-        }
-        "orderedList" => {
-            let start = object
-                .get("attrs")
-                .and_then(Value::as_object)
-                .and_then(|attrs| attrs.get("start"))
-                .and_then(Value::as_u64)
-                .unwrap_or(1);
-            output.push_str("<ol");
-            if start != 1 {
-                output.push_str(" start=\"");
-                output.push_str(&start.to_string());
-                output.push('"');
-            }
-            output.push('>');
-            render_html_children(object, output);
-            output.push_str("</ol>");
-        }
-        "listItem" => render_html_element("li", object, output),
-        "taskItem" => {
-            let checked = object
-                .get("attrs")
-                .and_then(Value::as_object)
-                .and_then(|attrs| attrs.get("checked"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            output.push_str(if checked {
-                "<li data-checked=\"true\">"
-            } else {
-                "<li data-checked=\"false\">"
-            });
-            render_html_children(object, output);
-            output.push_str("</li>");
-        }
-        "table" => {
-            output.push_str("<table><tbody>");
-            render_html_children(object, output);
-            output.push_str("</tbody></table>");
-        }
-        "tableRow" => render_html_element("tr", object, output),
-        "tableCell" => render_html_element("td", object, output),
-        "tableHeader" => render_html_element("th", object, output),
-        "codeBlock" => {
-            output.push_str("<pre><code>");
-            render_html_children(object, output);
-            output.push_str("</code></pre>");
-        }
-        "horizontalRule" => output.push_str("<hr>"),
-        "imageAttachment" => render_html_image_attachment(object, output),
-        "evidenceImage" => render_html_evidence_image(object, output),
-        "hardBreak" => output.push_str("<br>"),
-        "text" => render_html_text(object, output),
-        _ => {}
-    }
-}
-
-fn render_html_image_attachment(object: &serde_json::Map<String, Value>, output: &mut String) {
-    let Some(attrs) = object.get("attrs").and_then(Value::as_object) else {
-        return;
-    };
-    let Some(attachment_id) = attrs.get("attachmentId").and_then(Value::as_str) else {
-        return;
-    };
-    let Some(alt) = attrs.get("alt").and_then(Value::as_str) else {
-        return;
-    };
-    output.push_str("<figure data-sheut-attachment=\"");
-    output.push_str(&escape_html(attachment_id));
-    output.push_str("\"><figcaption>");
-    output.push_str(&escape_html(alt));
-    output.push_str("</figcaption></figure>");
-}
-
-fn render_html_evidence_image(object: &serde_json::Map<String, Value>, output: &mut String) {
-    let Some(alt) = object
-        .get("attrs")
-        .and_then(Value::as_object)
-        .and_then(|attrs| attrs.get("alt"))
-        .and_then(Value::as_str)
-    else {
-        return;
-    };
-    output.push_str("<figure data-sheut-evidence-image><figcaption>");
-    output.push_str(&escape_html(alt));
-    output.push_str("</figcaption></figure>");
-}
-
-fn render_html_element(tag: &str, object: &serde_json::Map<String, Value>, output: &mut String) {
-    output.push('<');
-    output.push_str(tag);
-    output.push('>');
-    render_html_children(object, output);
-    output.push_str("</");
-    output.push_str(tag);
-    output.push('>');
-}
-
-fn render_html_text_block(tag: &str, object: &serde_json::Map<String, Value>, output: &mut String) {
-    output.push('<');
-    output.push_str(tag);
-    if let Some(alignment) = object
-        .get("attrs")
-        .and_then(Value::as_object)
-        .and_then(|attrs| attrs.get("textAlign"))
-        .and_then(Value::as_str)
-    {
-        output.push_str(" style=\"text-align:");
-        output.push_str(alignment);
-        output.push('"');
-    }
-    output.push('>');
-    render_html_children(object, output);
-    output.push_str("</");
-    output.push_str(tag);
-    output.push('>');
-}
-
-fn render_html_children(object: &serde_json::Map<String, Value>, output: &mut String) {
-    if let Some(children) = object.get("content").and_then(Value::as_array) {
-        for child in children {
-            render_html_node(child, output);
-        }
-    }
-}
-
-fn render_html_text(object: &serde_json::Map<String, Value>, output: &mut String) {
-    let Some(text) = object.get("text").and_then(Value::as_str) else {
-        return;
-    };
-    let mut rendered = escape_html(text);
-    if let Some(marks) = object.get("marks").and_then(Value::as_array) {
-        for mark in marks {
-            let Some(mark) = mark.as_object() else {
-                continue;
-            };
-            rendered = match mark.get("type").and_then(Value::as_str) {
-                Some("bold") => wrap_html("strong", &rendered),
-                Some("italic") => wrap_html("em", &rendered),
-                Some("strike") => wrap_html("s", &rendered),
-                Some("code") => wrap_html("code", &rendered),
-                Some("underline") => wrap_html("u", &rendered),
-                Some("highlight") => wrap_html("mark", &rendered),
-                Some("subscript") => wrap_html("sub", &rendered),
-                Some("superscript") => wrap_html("sup", &rendered),
-                Some("link") => render_safe_link(mark, &rendered),
-                _ => rendered,
-            };
-        }
-    }
-    output.push_str(&rendered);
-}
-
-fn render_safe_link(mark: &serde_json::Map<String, Value>, content: &str) -> String {
-    let href = mark
-        .get("attrs")
-        .and_then(Value::as_object)
-        .and_then(|attrs| attrs.get("href"))
-        .and_then(Value::as_str);
-    let Some(href) = href.filter(|href| is_safe_link(href)) else {
-        return content.to_owned();
-    };
-    format!("<a href=\"{}\">{content}</a>", escape_html(href.trim()))
-}
-
-fn is_safe_link(href: &str) -> bool {
-    let trimmed = href.trim();
-    if trimmed.chars().any(char::is_control) {
-        return false;
-    }
-    // Relative network paths (//host) are excluded even though ordinary local
-    // anchors and paths are allowed; they would otherwise escape offline output.
-    let lowercase = trimmed.to_ascii_lowercase();
-    lowercase.starts_with("https://")
-        || lowercase.starts_with("http://")
-        || lowercase.starts_with("mailto:")
-        || (trimmed.starts_with('/') && !trimmed.starts_with("//"))
-        || trimmed.starts_with('#')
-}
-
-fn wrap_html(tag: &str, content: &str) -> String {
-    format!("<{tag}>{content}</{tag}>")
-}
-
-fn escape_html(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for character in value.chars() {
-        match character {
-            '&' => escaped.push_str("&amp;"),
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '"' => escaped.push_str("&quot;"),
-            '\'' => escaped.push_str("&#39;"),
-            _ => escaped.push(character),
-        }
-    }
-    escaped
 }
 
 fn render_plain_text_node(node: &Value, output: &mut String) {
@@ -1446,7 +1731,52 @@ fn render_plain_text_node(node: &Value, output: &mut String) {
         output.push('\n');
         return;
     }
-    if matches!(node_type, "imageAttachment" | "evidenceImage") {
+    if node_type == "evidenceCitation" {
+        if let Some(label) = object
+            .get("attrs")
+            .and_then(Value::as_object)
+            .and_then(|attrs| attrs.get("label"))
+            .and_then(Value::as_str)
+        {
+            output.push_str("[Evidence: ");
+            output.push_str(label);
+            output.push(']');
+        }
+        return;
+    }
+    if node_type == "projectReference" {
+        if let Some(label) = object
+            .get("attrs")
+            .and_then(Value::as_object)
+            .and_then(|attrs| attrs.get("label"))
+            .and_then(Value::as_str)
+        {
+            output.push_str(label);
+        }
+        return;
+    }
+    if node_type == "mitreSnapshot" {
+        if let Some(observations) = object
+            .get("attrs")
+            .and_then(Value::as_object)
+            .and_then(|attrs| attrs.get("observations"))
+            .and_then(Value::as_array)
+        {
+            for observation in observations {
+                let values = ["techniqueId", "techniqueName", "explanation"]
+                    .into_iter()
+                    .filter_map(|field| observation.get(field).and_then(Value::as_str))
+                    .collect::<Vec<_>>();
+                output.push_str(&values.join("\t"));
+                output.push('\n');
+            }
+        }
+        return;
+    }
+    if matches!(
+        node_type,
+        "imageAttachment" | "evidenceImage" | "graphSnapshot"
+    ) {
         if let Some(alt) = object
             .get("attrs")
             .and_then(Value::as_object)

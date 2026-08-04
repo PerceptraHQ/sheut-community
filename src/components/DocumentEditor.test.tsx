@@ -4,12 +4,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WORKSPACE_ACTION_EVENT } from "../lib/desktopActions";
 import type { DocumentEnvelope } from "../lib/documents";
 import * as documentsApi from "../lib/documents";
+import * as graphApi from "../lib/graph";
 import DocumentEditor, { AUTOSAVE_INTERVAL_MS } from "./DocumentEditor";
 import type { VaultPromiseNoticeOptions } from "./VaultNotices";
 
 const editorState = vi.hoisted(() => ({
   activeTable: false,
   alignment: "left",
+  outlineNodes: [] as Array<{
+    level: number;
+    position: number;
+    title: string;
+    type: "heading" | "paragraph";
+  }>,
   selectedText: "",
   selection: { from: 1, to: 1, empty: true },
 }));
@@ -21,8 +28,10 @@ const editorCommandSpies = vi.hoisted(() => ({
   deleteColumn: vi.fn(),
   deleteRow: vi.fn(),
   deleteTable: vi.fn(),
+  focus: vi.fn(),
   insertContent: vi.fn(),
   insertTable: vi.fn(),
+  setTextSelection: vi.fn(),
   setTextAlign: vi.fn(),
   unsetLink: vi.fn(),
 }));
@@ -48,7 +57,10 @@ vi.mock("@tiptap/react", async () => {
   let onUpdate: ((event: { editor: typeof editor }) => void) | undefined;
   const selectionListeners = new Set<() => void>();
   const chain = {
-    focus: () => chain,
+    focus: () => {
+      editorCommandSpies.focus();
+      return chain;
+    },
     toggleHeading: () => chain,
     toggleBold: () => chain,
     toggleItalic: () => chain,
@@ -99,6 +111,11 @@ vi.mock("@tiptap/react", async () => {
       editorCommandSpies.insertContent(content);
       return chain;
     },
+    setTextSelection: (position: number) => {
+      editorCommandSpies.setTextSelection(position);
+      return chain;
+    },
+    scrollIntoView: () => chain,
     extendMarkRange: () => chain,
     setLink: () => chain,
     unsetLink: () => {
@@ -129,7 +146,26 @@ vi.mock("@tiptap/react", async () => {
       get selection() {
         return editorState.selection;
       },
-      doc: { textBetween: () => editorState.selectedText },
+      doc: {
+        descendants: (
+          visitor: (
+            node: { attrs: { level: number }; textContent: string; type: { name: string } },
+            position: number,
+          ) => void,
+        ) => {
+          for (const node of editorState.outlineNodes) {
+            visitor(
+              {
+                attrs: { level: node.level },
+                textContent: node.title,
+                type: { name: node.type },
+              },
+              node.position,
+            );
+          }
+        },
+        textBetween: () => editorState.selectedText,
+      },
     },
     chain: () => chain,
     commands: { setContent: vi.fn() },
@@ -154,10 +190,10 @@ vi.mock("@tiptap/react", async () => {
       }, []);
       return selector({ editor });
     },
-    EditorContent: () =>
+    EditorContent: ({ className }: { className?: string }) =>
       React.createElement(
-        React.Fragment,
-        null,
+        "div",
+        { className },
         React.createElement(
           "button",
           { type: "button", onClick: () => onUpdate?.({ editor }) },
@@ -184,7 +220,6 @@ vi.mock("../lib/documents", async (importOriginal) => {
   return {
     ...actual,
     pickDocumentImage: vi.fn(),
-    renderSavedDocument: vi.fn(),
     saveDocument: vi.fn(),
   };
 });
@@ -192,6 +227,12 @@ vi.mock("../lib/documents", async (importOriginal) => {
 vi.mock("../lib/brand-profiles", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/brand-profiles")>()),
   listBrandProfiles: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("../lib/graph", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/graph")>()),
+  createGraphSnapshotAttachment: vi.fn(),
+  listGraphWorkspaces: vi.fn(),
 }));
 
 vi.mock("./VaultNotices", () => ({
@@ -214,16 +255,30 @@ const document: DocumentEnvelope = {
   },
 };
 
+const reportDocument: DocumentEnvelope = {
+  ...document,
+  kind: "report",
+  reportProperties: {
+    reportId: "RPT-0001",
+    title: "Untitled report",
+    authors: [],
+    producingOrganisation: null,
+    issueDate: "2026-08-04",
+  },
+};
+
 describe("DocumentEditor", () => {
   beforeEach(() => {
     editorState.activeTable = false;
     editorState.alignment = "left";
+    editorState.outlineNodes = [];
     editorState.selectedText = "";
     editorState.selection = { from: 1, to: 1, empty: true };
     for (const command of Object.values(editorCommandSpies)) command.mockReset();
     vi.mocked(documentsApi.saveDocument).mockReset();
     vi.mocked(documentsApi.pickDocumentImage).mockReset();
-    vi.mocked(documentsApi.renderSavedDocument).mockReset();
+    vi.mocked(graphApi.createGraphSnapshotAttachment).mockReset();
+    vi.mocked(graphApi.listGraphWorkspaces).mockReset().mockResolvedValue([]);
     noticeSpies.add.mockReset();
     noticeSpies.promise.mockClear();
   });
@@ -240,9 +295,9 @@ describe("DocumentEditor", () => {
       />,
     );
 
-    expect(screen.getByRole("toolbar", { name: "Document formatting" })).toBeVisible();
+    expect(screen.getByRole("toolbar", { name: "Document toolbar" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Heading 3" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Show more formatting" }));
+    await user.click(screen.getByRole("button", { name: "More formatting" }));
     await user.click(screen.getByRole("button", { name: "Align center" }));
     await user.click(screen.getByRole("button", { name: "Justify" }));
 
@@ -250,8 +305,7 @@ describe("DocumentEditor", () => {
     expect(editorCommandSpies.setTextAlign).toHaveBeenNthCalledWith(2, "justify");
   });
 
-  it("uses recognizable toolbar icons instead of letter abbreviations", async () => {
-    const user = userEvent.setup();
+  it("uses recognizable toolbar icons instead of letter abbreviations", () => {
     const { container } = render(
       <DocumentEditor
         projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
@@ -261,8 +315,6 @@ describe("DocumentEditor", () => {
         onBusyChange={vi.fn()}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Show more formatting" }));
-
     for (const label of [
       "Add or edit link",
       "Strikethrough",
@@ -278,7 +330,7 @@ describe("DocumentEditor", () => {
     expect(screen.getByRole("button", { name: "Add or edit link" })).not.toHaveTextContent("Ln");
   });
 
-  it("keeps common formatting visible while additional formatting expands like an accordion", async () => {
+  it("keeps one responsive toolbar and expands secondary formatting without wrapping", async () => {
     const user = userEvent.setup();
     render(
       <DocumentEditor
@@ -291,27 +343,203 @@ describe("DocumentEditor", () => {
       />,
     );
 
-    const actions = screen.getByRole("toolbar", { name: "Document actions" });
-    expect(within(actions).getByRole("button", { name: "Save document" })).toBeVisible();
-    expect(within(actions).getByRole("button", { name: "Undo" })).toBeVisible();
-    expect(within(actions).getByRole("button", { name: "Redo" })).toBeVisible();
-    expect(within(actions).getByRole("button", { name: "Export document" })).toBeVisible();
-    const formatting = screen.getByRole("toolbar", { name: "Document formatting" });
-    expect(formatting).not.toHaveClass("editor-toolbar-scroll");
-    expect(within(formatting).queryByRole("button", { name: "Save document" })).toBeNull();
-    expect(within(formatting).queryByRole("button", { name: "Undo" })).toBeNull();
-    expect(within(formatting).getByRole("button", { name: "Bold" })).toBeVisible();
-    expect(screen.queryByRole("toolbar", { name: "Additional formatting" })).toBeNull();
-    const showMore = screen.getByRole("button", { name: "Show more formatting" });
-    expect(showMore).toHaveAttribute("aria-expanded", "false");
-    await user.click(showMore);
-    expect(screen.getByRole("toolbar", { name: "Additional formatting" })).toBeVisible();
-    expect(screen.getByRole("toolbar", { name: "Document actions" })).toBeVisible();
-    const hideMore = screen.getByRole("button", { name: "Hide more formatting" });
-    expect(hideMore).toHaveAttribute("aria-expanded", "true");
-    await user.click(hideMore);
-    expect(screen.queryByRole("toolbar", { name: "Additional formatting" })).toBeNull();
-    expect(screen.getByRole("toolbar", { name: "Document formatting" })).toBeVisible();
+    const toolbar = screen.getByRole("toolbar", { name: "Document toolbar" });
+    expect(screen.getAllByRole("toolbar")).toHaveLength(1);
+    expect(within(toolbar).getByRole("button", { name: "Save document" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Undo" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Redo" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Export document" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Bold" })).toBeVisible();
+    const more = within(toolbar).getByRole("button", { name: "More formatting" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    await user.click(more);
+    expect(more).toHaveAttribute("aria-expanded", "true");
+    expect(within(toolbar).getByRole("button", { name: "Strikethrough" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Align center" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Insert table" })).toBeVisible();
+  });
+
+  it("keeps report insertion actions in one menu without duplicate toolbar buttons", async () => {
+    const user = userEvent.setup();
+    render(
+      <DocumentEditor
+        projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+        document={reportDocument}
+        onSaved={vi.fn()}
+        onReload={vi.fn()}
+        onBusyChange={vi.fn()}
+      />,
+    );
+
+    const toolbar = screen.getByRole("toolbar", { name: "Document toolbar" });
+    const formatting = within(toolbar).getByRole("group", { name: "Document formatting" });
+    const documentActions = within(toolbar).getByRole("group", { name: "Document actions" });
+    expect(screen.getAllByRole("toolbar")).toHaveLength(1);
+    expect(within(formatting).getByRole("button", { name: "Undo" })).toBeVisible();
+    expect(within(formatting).getByRole("button", { name: "Redo" })).toBeVisible();
+    expect(within(formatting).getByRole("button", { name: "Insert report content" })).toBeVisible();
+    expect(
+      within(documentActions).getByRole("button", { name: "More document actions" }),
+    ).toBeVisible();
+    expect(within(documentActions).queryByRole("button", { name: "Undo" })).toBeNull();
+    expect(within(documentActions).queryByRole("button", { name: "Redo" })).toBeNull();
+    expect(
+      within(documentActions).queryByRole("button", { name: "Insert report content" }),
+    ).toBeNull();
+    expect(within(formatting).getByRole("group", { name: "Detailed typography" })).toHaveClass(
+      "editor-toolbar-responsive-priority-1",
+    );
+    expect(
+      within(formatting).getByRole("group", { name: "Additional inline formatting" }),
+    ).toHaveClass("editor-toolbar-responsive-priority-2");
+    expect(within(formatting).getByRole("group", { name: "Text alignment" })).toHaveClass(
+      "editor-toolbar-responsive-priority-3",
+    );
+    expect(screen.queryByRole("button", { name: "Attach image" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Insert table" })).toBeNull();
+    await user.click(
+      within(documentActions).getByRole("button", { name: "More document actions" }),
+    );
+    const actionsMenu = await screen.findByRole("dialog", { name: "Report" });
+    expect(
+      within(actionsMenu).getByRole("button", { name: "Report administration" }),
+    ).toBeVisible();
+    expect(within(actionsMenu).getByRole("button", { name: "Preview A4 page" })).toBeVisible();
+    expect(within(actionsMenu).getByText(/Add H1–H3 headings/)).toBeVisible();
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Insert report content" }));
+    const menu = await screen.findByRole("dialog", { name: "Insert report content" });
+    for (const label of ["Evidence", "Image", "Table", /Page break/]) {
+      expect(within(menu).getByText(label)).toBeVisible();
+    }
+    await user.click(within(menu).getByText("Table"));
+    expect(
+      screen.getByRole("button", { name: "Landscape page is available for very wide tables" }),
+    ).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("derives the report outline from non-empty H1-H3 headings and focuses a selection", async () => {
+    const user = userEvent.setup();
+    editorState.outlineNodes = [
+      { level: 1, position: 3, title: " Executive summary ", type: "heading" },
+      { level: 2, position: 14, title: "   ", type: "heading" },
+      { level: 3, position: 21, title: "Findings", type: "heading" },
+      { level: 1, position: 30, title: "Not a heading", type: "paragraph" },
+    ];
+    render(
+      <DocumentEditor
+        projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+        document={reportDocument}
+        onSaved={vi.fn()}
+        onReload={vi.fn()}
+        onBusyChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Simulate edit" }));
+    await user.click(screen.getByRole("button", { name: "More document actions" }));
+    const actionsMenu = await screen.findByRole("dialog", { name: "Report" });
+    const summary = within(actionsMenu).getByRole("button", { name: "Executive summary" });
+    const findings = within(actionsMenu).getByRole("button", { name: "Findings" });
+    expect(
+      summary.compareDocumentPosition(findings) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(within(actionsMenu).queryByText("Not a heading")).toBeNull();
+
+    await user.click(findings);
+    expect(editorCommandSpies.focus).toHaveBeenCalled();
+    expect(editorCommandSpies.setTextSelection).toHaveBeenCalledWith(22);
+  });
+
+  it("cancels an insertion without changing the document and restores the caret", async () => {
+    const user = userEvent.setup();
+    editorState.selection = { from: 7, to: 7, empty: true };
+    render(
+      <DocumentEditor
+        projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+        document={reportDocument}
+        onSaved={vi.fn()}
+        onReload={vi.fn()}
+        onBusyChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Insert report content" }));
+    const insertMenu = await screen.findByRole("dialog", { name: "Insert report content" });
+    await user.click(within(insertMenu).getByText("Evidence"));
+    expect(await screen.findByRole("dialog", { name: "Insert Evidence" })).toBeVisible();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Insert Evidence" })).not.toBeInTheDocument(),
+    );
+    expect(editorCommandSpies.insertContent).not.toHaveBeenCalled();
+    expect(editorCommandSpies.setTextSelection).toHaveBeenLastCalledWith(7);
+    expect(editorCommandSpies.focus).toHaveBeenCalled();
+  });
+
+  it("does not insert a graph if the dialog is cancelled while rendering", async () => {
+    const user = userEvent.setup();
+    let resolveSnapshot: ((snapshot: graphApi.GraphSnapshotAttachment) => void) | undefined;
+    vi.mocked(graphApi.listGraphWorkspaces).mockResolvedValue([
+      {
+        schema_version: 1,
+        id: "4f3d8e34-7c64-4d41-8b68-d7a334e1a884",
+        name: "Infrastructure map",
+        revision: 7,
+        mode: "view",
+        viewport: { x: 0, y: 0, zoom: 1 },
+        created_at_unix_ms: 1,
+        updated_at_unix_ms: 2,
+        deleted_at_unix_ms: null,
+      },
+    ]);
+    vi.mocked(graphApi.createGraphSnapshotAttachment).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSnapshot = resolve;
+        }),
+    );
+    render(
+      <DocumentEditor
+        projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+        document={reportDocument}
+        onSaved={vi.fn()}
+        onReload={vi.fn()}
+        onBusyChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Insert report content" }));
+    const insertMenu = await screen.findByRole("dialog", { name: "Insert report content" });
+    await user.click(within(insertMenu).getByText("Graph snapshot"));
+    await user.click(await screen.findByRole("option", { name: /Infrastructure map/ }));
+    await user.click(screen.getByRole("button", { name: "Insert inline" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Insert graph snapshot" }),
+      ).not.toBeInTheDocument(),
+    );
+
+    await act(async () => {
+      resolveSnapshot?.({
+        attachment: {
+          id: "22a415a0-61b2-4b50-904d-d5f180bfc505",
+          documentId: reportDocument.id,
+          mediaType: "image/png",
+          fileName: "graph.png",
+          byteLen: 64,
+        },
+        workspaceId: "4f3d8e34-7c64-4d41-8b68-d7a334e1a884",
+        workspaceRevision: 7,
+        workspaceName: "Infrastructure map",
+      });
+      await Promise.resolve();
+    });
+
+    expect(editorCommandSpies.insertContent).not.toHaveBeenCalled();
   });
 
   it("uses the available workspace width instead of constraining the editor chrome", () => {
@@ -328,6 +556,22 @@ describe("DocumentEditor", () => {
     const editor = container.querySelector(".document-editor");
     expect(editor).toHaveClass("w-full");
     expect(editor).not.toHaveClass("max-w-4xl");
+  });
+
+  it("keeps the report paper out of the dark prose theme", () => {
+    const { container } = render(
+      <DocumentEditor
+        projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+        document={reportDocument}
+        onSaved={vi.fn()}
+        onReload={vi.fn()}
+        onBusyChange={vi.fn()}
+      />,
+    );
+
+    const paper = container.querySelector(".report-page-surface");
+    expect(paper).toHaveClass("prose");
+    expect(paper).not.toHaveClass("prose-invert");
   });
 
   it("collects publication overrides before opening the native save picker", async () => {
@@ -349,17 +593,17 @@ describe("DocumentEditor", () => {
     expect(screen.getByRole("dialog", { name: "Publish document" })).toHaveClass("max-w-[48rem]");
     const fileName = screen.getByRole("textbox", { name: "File name" });
     expect(fileName).toHaveValue("Original");
-    await user.click(screen.getByRole("button", { name: "PDF" }));
+    expect(screen.getByText("PDF")).toBeVisible();
     await user.click(screen.getByRole("combobox", { name: "Paper size" }));
-    await user.click(screen.getByRole("option", { name: "Letter US Letter" }));
+    await user.click(await screen.findByRole("option", { name: "Letter US Letter" }));
     await user.click(screen.getByRole("combobox", { name: "Orientation" }));
-    await user.click(screen.getByRole("option", { name: "Landscape Wide pages" }));
+    await user.click(await screen.findByRole("option", { name: "Landscape Wide pages" }));
     await user.click(screen.getByRole("combobox", { name: "TLP marking" }));
     await user.click(
       await screen.findByRole("option", { name: "TLP:AMBER+STRICT — Organization only" }),
     );
-    expect(screen.getByText("Included sections")).toBeVisible();
-    expect(screen.getByText("Included appendices")).toBeVisible();
+    expect(screen.queryByText("Included sections")).toBeNull();
+    expect(screen.queryByText("Included appendices")).toBeNull();
     await user.click(screen.getByRole("switch", { name: "Include footer" }));
     await user.clear(fileName);
     await user.type(fileName, "incident-summary");
@@ -377,7 +621,7 @@ describe("DocumentEditor", () => {
       includeReleaseHistory: false,
       changeNote: null,
       pageFurniture: { header: true, footer: false, marking: true, page_numbers: true },
-      includedSections: ["document"],
+      includedSections: [],
       appendices: [],
       fileName: "incident-summary",
     });
@@ -424,7 +668,6 @@ describe("DocumentEditor", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Show more formatting" }));
     await user.click(screen.getByRole("button", { name: "Insert table" }));
     await user.click(screen.getByRole("button", { name: "Insert callout" }));
 
@@ -492,10 +735,9 @@ describe("DocumentEditor", () => {
       />,
     );
 
-    expect(screen.queryByRole("toolbar", { name: "Table editing" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Show more formatting" }));
+    expect(screen.queryByLabelText("Table editing")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Insert table" }));
-    expect(screen.getByRole("toolbar", { name: "Table editing" })).toBeVisible();
+    expect(screen.getByLabelText("Table editing")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Add row above" }));
     await user.click(screen.getByRole("button", { name: "Add row below" }));

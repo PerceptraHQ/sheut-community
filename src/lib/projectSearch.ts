@@ -1,4 +1,9 @@
-import { type DocumentEnvelope, type DocumentJsonNode, documentTitle } from "./documents";
+import {
+  type DocumentEnvelope,
+  type DocumentJsonNode,
+  documentKindLabel,
+  documentTitle,
+} from "./documents";
 import type { GraphWorkspace } from "./graph";
 import type { StixDraftSummary, StixObjectSummary } from "./stix";
 
@@ -135,11 +140,6 @@ function draftDisplayName(draft: StixDraftSummary): string {
     if (typeof value === "string" && value.trim()) return value.trim().slice(0, 120);
   }
   return `Untitled ${readableType(draft.objectType)} draft`;
-}
-
-function documentKindLabel(kind: DocumentEnvelope["kind"]): string {
-  if (kind === "analyst_note") return "Analyst note";
-  return "Investigation";
 }
 
 function readableType(value: string): string {

@@ -9,6 +9,7 @@ mod commands;
 mod desktop_menu;
 mod export;
 mod graph;
+mod graph_snapshot;
 mod telemetry;
 
 pub fn run() {
@@ -26,6 +27,7 @@ pub fn run() {
             graph::list_graph_source_items,
             graph::create_graph_workspace,
             graph::load_graph_workspace,
+            graph::create_graph_snapshot_attachment,
             graph::rename_graph_workspace,
             graph::delete_graph_workspace,
             graph::restore_graph_workspace,
@@ -73,17 +75,7 @@ pub fn run() {
             commands::create_project,
             commands::update_project_default_tlp,
             commands::create_document,
-            commands::list_report_templates,
-            commands::create_custom_report_template,
-            commands::list_guided_reports,
             commands::list_report_project_data,
-            commands::create_guided_report,
-            commands::save_guided_report,
-            commands::get_guided_report_readiness,
-            commands::update_guided_report_section_disposition,
-            commands::upgrade_illicit_ecosystem_report,
-            commands::delete_guided_report,
-            commands::restore_guided_report,
             commands::list_brand_profiles,
             commands::create_brand_profile,
             commands::update_brand_profile,
@@ -96,7 +88,6 @@ pub fn run() {
             commands::compare_document_revisions,
             commands::restore_document_revision,
             commands::export_saved_document,
-            commands::export_guided_report,
             commands::list_publication_records,
             commands::reproduce_publication,
             commands::pick_document_image,
@@ -111,7 +102,6 @@ pub fn run() {
             commands::create_project_backup,
             commands::load_document,
             commands::save_document,
-            commands::render_saved_document,
             commands::unlock_project,
             commands::unlock_passphrase_project,
             commands::lock_project,

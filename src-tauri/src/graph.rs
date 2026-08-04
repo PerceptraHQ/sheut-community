@@ -4,9 +4,9 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sheut_core::{
-    DocumentEnvelope, DocumentKind, GraphViewport, GraphWorkspace, GraphWorkspaceSnapshot, LocalId,
-    Position, Revision, TechniqueObservation, VisualLink, WorkspaceItem, WorkspaceItemKind,
-    WorkspaceMode,
+    DocumentEnvelope, DocumentKind, GraphViewport, GraphWorkspace, GraphWorkspaceSnapshot,
+    ImageAttachmentMetadata, LocalId, Position, Revision, TechniqueObservation, VisualLink,
+    WorkspaceItem, WorkspaceItemKind, WorkspaceMode,
 };
 use sheut_project::{GraphWorkspaceSeedItem, LifecycleErrorCode};
 use sheut_stix::{ExistingStixObject, StixDraft};
@@ -16,6 +16,7 @@ use crate::commands::{
     AppState, CommandError, StixDraftSummary, now_unix_ms, parse_project_id, parse_revision,
     with_manager,
 };
+use crate::graph_snapshot::{SnapshotEdge, SnapshotEdgeKind, SnapshotNode, SnapshotNodeKind};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +28,15 @@ struct GraphEdgeSummary {
     label: String,
     canonical_label: String,
     directed: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GraphSnapshotAttachment {
+    attachment: ImageAttachmentMetadata,
+    workspace_id: LocalId,
+    workspace_revision: Revision,
+    workspace_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -235,7 +245,7 @@ pub(crate) struct GraphNodeSummary {
     timeline_dates: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GraphWorkspaceView {
     workspace: GraphWorkspace,
@@ -591,6 +601,99 @@ pub(crate) async fn load_graph_workspace(
         ))
     })
     .await
+}
+
+#[tauri::command]
+pub(crate) async fn create_graph_snapshot_attachment(
+    project_id: String,
+    document_id: String,
+    workspace_id: String,
+    expected_revision: u64,
+    state: tauri::State<'_, AppState>,
+) -> Result<GraphSnapshotAttachment, CommandError> {
+    let project_id = parse_project_id(&project_id)?;
+    let document_id = crate::commands::parse_document_id(&document_id)?;
+    let workspace_id = parse_workspace_id(&workspace_id)?;
+    let expected_revision = parse_revision(expected_revision)?;
+    let now = now_unix_ms()?;
+    with_manager(Arc::clone(&state.projects), move |manager| {
+        let snapshot = manager.load_graph_workspace(project_id, workspace_id, now)?;
+        if snapshot.workspace().revision() != expected_revision {
+            return Err(sheut_project::LifecycleError::from_code(
+                LifecycleErrorCode::RevisionConflict,
+            ));
+        }
+        let objects = manager.list_stix_objects(project_id, now)?;
+        let drafts = manager.list_stix_drafts(project_id, now)?;
+        let documents = manager.list_documents(project_id, now)?;
+        let observations = manager.list_technique_observations(project_id, now)?;
+        let view = resolve_graph_view(snapshot, &objects, &drafts, &documents, &observations);
+        let payload = render_graph_snapshot_png(&view)?;
+        let file_name = format!("graph-{}-r{}.png", workspace_id, expected_revision.get());
+        let attachment =
+            manager.create_image_attachment(project_id, document_id, file_name, payload, now)?;
+        Ok(GraphSnapshotAttachment {
+            attachment,
+            workspace_id,
+            workspace_revision: expected_revision,
+            workspace_name: view.workspace.name().to_owned(),
+        })
+    })
+    .await
+}
+
+fn render_graph_snapshot_png(
+    view: &GraphWorkspaceView,
+) -> Result<Vec<u8>, sheut_project::LifecycleError> {
+    let positions = view
+        .items
+        .iter()
+        .map(|item| (item.item_id(), item.position()))
+        .collect::<HashMap<_, _>>();
+    let nodes = view
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            let position = positions.get(&node.id)?;
+            Some(SnapshotNode {
+                id: node.id.to_string(),
+                x: position.x,
+                y: position.y,
+                kind: match node.item_kind {
+                    WorkspaceItemKind::Intelligence => SnapshotNodeKind::Intelligence,
+                    WorkspaceItemKind::Evidence => SnapshotNodeKind::Evidence,
+                    WorkspaceItemKind::Document => SnapshotNodeKind::Document,
+                    WorkspaceItemKind::CatalogReference => SnapshotNodeKind::CatalogReference,
+                },
+                object_type: node.object_type.clone(),
+                display_name: node.display_name.clone(),
+                available: node.available,
+            })
+        })
+        .collect::<Vec<_>>();
+    let edges = view
+        .edges
+        .iter()
+        .map(|edge| SnapshotEdge {
+            source_id: edge.source_id.to_string(),
+            target_id: edge.target_id.to_string(),
+            label: if edge.label.trim().is_empty() {
+                readable_relationship_name(&edge.canonical_label)
+            } else {
+                edge.label.clone()
+            },
+            kind: match edge.kind {
+                GraphEdgeKind::Semantic => SnapshotEdgeKind::Semantic,
+                GraphEdgeKind::Reference => SnapshotEdgeKind::Reference,
+                GraphEdgeKind::Visual => SnapshotEdgeKind::Visual,
+                GraphEdgeKind::Draft => SnapshotEdgeKind::Draft,
+            },
+            directed: edge.directed,
+        })
+        .collect::<Vec<_>>();
+    crate::graph_snapshot::render(&nodes, &edges).map_err(|()| {
+        sheut_project::LifecycleError::from_code(LifecycleErrorCode::InvalidAttachment)
+    })
 }
 
 #[tauri::command]
@@ -1142,5 +1245,134 @@ mod tests {
                 "2020-01-04T00:00:00.000Z",
             ]
         );
+    }
+
+    #[test]
+    fn graph_snapshots_are_deterministic_valid_pngs() {
+        let workspace_id = LocalId::parse("4f3d8e34-7c64-4d41-8b68-d7a334e1a884").unwrap();
+        let item_id = LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap();
+        let workspace = GraphWorkspace::new(
+            workspace_id,
+            "Snapshot fixture",
+            WorkspaceMode::View,
+            GraphViewport::new(0.0, 0.0, 1.0).unwrap(),
+            1_000,
+        )
+        .unwrap();
+        let view = GraphWorkspaceView {
+            workspace,
+            items: vec![WorkspaceItem::new(
+                workspace_id,
+                item_id,
+                WorkspaceItemKind::Intelligence,
+                Position::new(40.0, 60.0).unwrap(),
+                false,
+            )],
+            nodes: vec![GraphNodeSummary {
+                id: item_id,
+                item_kind: WorkspaceItemKind::Intelligence,
+                object_type: "indicator".to_owned(),
+                display_name: "Fixture indicator".to_owned(),
+                available: true,
+                source_view: "intelligence".to_owned(),
+                stix_id: None,
+                timeline_dates: Vec::new(),
+            }],
+            edges: Vec::new(),
+        };
+
+        let first = render_graph_snapshot_png(&view).unwrap();
+        let second = render_graph_snapshot_png(&view).unwrap();
+
+        assert_eq!(first, second);
+        assert!(first.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let decoded = image::load_from_memory(&first).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (1600, 900));
+        let centered_icon_colors = decoded
+            .crop_imm(782, 432, 37, 37)
+            .to_rgba8()
+            .pixels()
+            .copied()
+            .collect::<HashSet<_>>();
+        assert!(
+            centered_icon_colors.len() > 8,
+            "the frozen node must contain its STIX icon instead of a flat placeholder"
+        );
+
+        let mut changed_type = view.clone();
+        changed_type.nodes[0].object_type = "malware".to_owned();
+        assert_ne!(first, render_graph_snapshot_png(&changed_type).unwrap());
+
+        let mut changed_name = view.clone();
+        changed_name.nodes[0].display_name = "Different indicator name".to_owned();
+        assert_ne!(first, render_graph_snapshot_png(&changed_name).unwrap());
+    }
+
+    #[test]
+    fn graph_snapshots_preserve_relationship_label_direction_and_kind() {
+        let workspace_id = LocalId::parse("4f3d8e34-7c64-4d41-8b68-d7a334e1a884").unwrap();
+        let source_id = LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap();
+        let target_id = LocalId::parse("04c230e7-e13f-4f68-a8b4-da72a31bcb13").unwrap();
+        let workspace = GraphWorkspace::new(
+            workspace_id,
+            "Relationship fixture",
+            WorkspaceMode::View,
+            GraphViewport::new(0.0, 0.0, 1.0).unwrap(),
+            1_000,
+        )
+        .unwrap();
+        let item = |item_id, x| {
+            WorkspaceItem::new(
+                workspace_id,
+                item_id,
+                WorkspaceItemKind::Intelligence,
+                Position::new(x, 60.0).unwrap(),
+                false,
+            )
+        };
+        let node = |id, object_type: &str, display_name: &str| GraphNodeSummary {
+            id,
+            item_kind: WorkspaceItemKind::Intelligence,
+            object_type: object_type.to_owned(),
+            display_name: display_name.to_owned(),
+            available: true,
+            source_view: "intelligence".to_owned(),
+            stix_id: None,
+            timeline_dates: Vec::new(),
+        };
+        let edge = |kind, source_id, target_id, label: &str| GraphEdgeSummary {
+            id: format!("{source_id}:{target_id}"),
+            kind,
+            source_id,
+            target_id,
+            label: readable_relationship_name(label),
+            canonical_label: label.to_owned(),
+            directed: true,
+        };
+        let view = GraphWorkspaceView {
+            workspace,
+            items: vec![item(source_id, 20.0), item(target_id, 100.0)],
+            nodes: vec![
+                node(source_id, "threat-actor", "Fixture actor"),
+                node(target_id, "malware", "Fixture malware"),
+            ],
+            edges: vec![edge(GraphEdgeKind::Semantic, source_id, target_id, "uses")],
+        };
+        let uses = render_graph_snapshot_png(&view).unwrap();
+
+        let mut different_label = view.clone();
+        different_label.edges[0].label = "Targets".to_owned();
+        different_label.edges[0].canonical_label = "targets".to_owned();
+        assert_ne!(uses, render_graph_snapshot_png(&different_label).unwrap());
+
+        let mut reversed = view.clone();
+        reversed.edges[0].source_id = target_id;
+        reversed.edges[0].target_id = source_id;
+        assert_ne!(uses, render_graph_snapshot_png(&reversed).unwrap());
+
+        let mut visual = view;
+        visual.edges[0].kind = GraphEdgeKind::Visual;
+        visual.edges[0].directed = false;
+        assert_ne!(uses, render_graph_snapshot_png(&visual).unwrap());
     }
 }

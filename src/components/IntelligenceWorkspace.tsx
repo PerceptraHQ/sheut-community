@@ -368,7 +368,7 @@ export function IntelligenceWorkspace({ projectId }: IntelligenceWorkspaceProps)
 
   return (
     <section
-      className="mx-auto flex w-full max-w-5xl flex-col px-5 py-5"
+      className="mx-auto flex w-full flex-col px-5 py-5 xl:px-8 xl:py-7 2xl:px-10 2xl:py-8"
       aria-labelledby="intel-title"
     >
       <header className="flex flex-wrap items-start justify-between gap-3 border-panel-border border-b pb-4">

@@ -70,19 +70,33 @@ export function ProjectBackups({ projectId }: ProjectBackupsProps) {
         onClick={() => void handleCreate()}
         disabled={creating}
       >
-        {creating ? "Saving…" : "Create recovery point"}
+        {creating
+          ? "Saving…"
+          : backups.length > 0
+            ? "Create another recovery point"
+            : "Create recovery point"}
       </Button>
-      {loading ? <p className="mt-2 mb-0 text-[11px] text-copy-faint">Loading…</p> : null}
-      {!loading && backups.length === 0 ? (
-        <p className="mt-2 mb-0 text-[11px] text-copy-faint leading-4">No recovery points yet.</p>
-      ) : null}
-      {backups.length > 0 ? (
-        <ul className="mt-2 mb-0 list-none space-y-1 p-0 text-[11px] text-copy-muted">
-          {backups.slice(0, 3).map((backup) => (
-            <li key={backup.id}>{dateFormatter.format(new Date(backup.createdAtUnixMs))}</li>
-          ))}
-        </ul>
-      ) : null}
+      <div aria-live="polite">
+        {loading ? <p className="mt-2 mb-0 text-[11px] text-copy-faint">Loading…</p> : null}
+        {!loading && backups.length === 0 ? (
+          <p className="mt-2 mb-0 text-[11px] text-copy-faint leading-4">No recovery points yet.</p>
+        ) : null}
+        {backups.length > 0 ? (
+          <div className="mt-2 rounded-md border border-panel-border bg-panel-subtle px-2.5 py-2">
+            <p className="m-0 text-[10px] text-copy-faint uppercase tracking-wider">
+              Latest recovery point
+            </p>
+            <p className="mt-1 mb-0 text-[11px] text-copy-secondary">
+              {dateFormatter.format(new Date(backups[0].createdAtUnixMs))}
+            </p>
+            {backups.length > 1 ? (
+              <p className="mt-1 mb-0 text-[10px] text-copy-faint">
+                {backups.length - 1} earlier {backups.length === 2 ? "point" : "points"} available
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
       {error ? (
         <p className="error-message mt-2" role="alert">
           {error}

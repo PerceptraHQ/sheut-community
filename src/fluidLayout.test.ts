@@ -32,16 +32,49 @@ describe("fluid application shell", () => {
     expect(appCss).toMatch(/--explorer-width:\s*224px;/u);
     expect(appCss).toMatch(/--inspector-width:\s*236px;/u);
     expect(appCss).toMatch(/\.workspace\s*\{[^}]*flex:\s*1 1 0;/su);
-    expect(investigationsWorkspace).toContain('"grid-cols-[240px_minmax(0,1fr)]"');
+    expect(investigationsWorkspace).toContain(
+      'className="document-workspace-grid grid h-full min-h-full"',
+    );
+    expect(appCss).toMatch(
+      /\.document-workspace-grid\s*\{[^}]*grid-template-columns:\s*240px minmax\(0, 1fr\);/su,
+    );
   });
 
-  it("styles custom-template and structured report inputs as full-width controls", () => {
-    expect(appCss).toMatch(/\.control-input,[\s\S]*?width:\s*100%;/u);
-    expect(appCss).toMatch(/\.guided-report-table-row\s*\{[^}]*width:\s*100%;/su);
-    expect(appCss).toMatch(/\.guided-report-table-textarea\s*\{[^}]*min-height:\s*5rem;/su);
+  it("expands desktop rails at the supported large-screen breakpoints", () => {
+    for (const [width, explorer, inspector, documents] of [
+      [1440, 248, 256, 256],
+      [1920, 272, 288, 280],
+      [2560, 304, 320, 320],
+    ]) {
+      const breakpoint = new RegExp(
+        `@media \\(width >= ${width}px\\)[\\s\\S]*?--explorer-width:\\s*${explorer}px;[\\s\\S]*?--inspector-width:\\s*${inspector}px;[\\s\\S]*?document-workspace-grid[^{]*\\{[^}]*grid-template-columns:\\s*${documents}px minmax\\(0, 1fr\\);`,
+        "u",
+      );
+      expect(appCss).toMatch(breakpoint);
+    }
+  });
+
+  it("shows report pages at bounded A4 and Letter dimensions", () => {
+    expect(appCss).toMatch(/\.editor-toolbar-unified\s*\{[^}]*height:\s*3\.25rem;/su);
+    expect(appCss).toMatch(/\.control-input\s*\{[^}]*width:\s*100%;/su);
     expect(appCss).toMatch(
-      /\.guided-report-table-row\[data-layout="source-citation"\]\s*\{[^}]*grid-template-areas:/su,
+      /\.report-page-surface\s*\{[^}]*width:\s*min\(calc\(100% - 3rem\), 210mm\);[^}]*min-height:\s*297mm;/su,
     );
+    expect(appCss).toMatch(
+      /data-paper-size="letter"[^}]*width:\s*min\(calc\(100% - 3rem\), 8\.5in\);[^}]*min-height:\s*11in;/su,
+    );
+  });
+
+  it("expands advanced formatting inside the single toolbar row", () => {
+    expect(appCss).toMatch(
+      /data-more-formatting-open[^}]*\.editor-toolbar-formatting\s*\{[^}]*overflow-x:\s*auto;/su,
+    );
+    expect(appCss).toMatch(
+      /data-more-formatting-open[^}]*\.editor-toolbar-responsive-priority-1,[\s\S]*?display:\s*flex;/su,
+    );
+    expect(appCss).toContain("container-name: document-toolbar");
+    expect(appCss).toContain("@container document-toolbar (min-width: 68rem)");
+    expect(appCss).toContain("@container document-toolbar (min-width: 106rem)");
   });
 
   it("removes the redundant command-row gap from the document workspace", () => {
@@ -52,8 +85,9 @@ describe("fluid application shell", () => {
       /\.workspace\[data-active-view="investigations"\] \.command-bar\s*\{[^}]*display:\s*none;/su,
     );
     expect(investigationsWorkspace).toContain('className="workspace-tab-actions"');
-    expect(investigationsWorkspace).toContain('aria-label="New report"');
+    expect(investigationsWorkspace).toContain('label="New Report"');
     expect(appCss).toMatch(/\.workspace-tab-actions\s*\{[^}]*order:\s*1;/su);
+    expect(appCss).toMatch(/\.report-document-editor\s*\{[^}]*padding:\s*0 0 3rem;/su);
   });
 
   it("moves the activity rail and primary sidebar as one dock", () => {

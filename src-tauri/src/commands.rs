@@ -17,14 +17,12 @@ use sha2::{Digest, Sha256};
 use sheut_core::{
     AnalyticConfidence, BrandAssetMetadata, BrandAssetRole, BrandProfile, BrandProfileInput,
     DocumentActivityEntry, DocumentEnvelope, DocumentKind, DocumentRevisionDiff,
-    DocumentRevisionSummary, EvidenceFileMetadata, EvidenceMetadataInput, GuidedReport,
-    GuidedReportFieldValue, ImageAttachmentMetadata, ImageMediaType, LocalId,
-    MAX_EVIDENCE_FILE_BYTES, MAX_IMAGE_ATTACHMENT_BYTES, MitreCatalog, MitreTechniqueReference,
-    PageFurniture, PageOrientation, PaperSize, ProjectDataReferenceKind, PublicationRecord,
-    PublicationReleaseEntry, PublicationSettings, PublicationSnapshot, PublicationSource,
-    PublicationStatus, RenderedDocument, ReportReadinessWarning, ReportSectionDisposition,
-    ReportTemplateDefinition, ReportTemplateSection, Revision, SemanticRelationshipDraft,
-    TechniqueAssessment, TechniqueObservation, TechniqueOutcome, TlpMarking, render_document,
+    DocumentRevisionSummary, EvidenceFileMetadata, EvidenceMetadataInput, ImageAttachmentMetadata,
+    ImageMediaType, LocalId, MAX_EVIDENCE_FILE_BYTES, MAX_IMAGE_ATTACHMENT_BYTES, MitreCatalog,
+    MitreTechniqueReference, PageFurniture, PageOrientation, PaperSize, ProjectDataReferenceKind,
+    PublicationRecord, PublicationReleaseEntry, PublicationSettings, PublicationSnapshot,
+    PublicationSource, PublicationStatus, ReportProperties, Revision, SemanticRelationshipDraft,
+    TechniqueAssessment, TechniqueObservation, TechniqueOutcome, TlpMarking,
 };
 use sheut_mitre::{
     CatalogSnapshot, CatalogStatus, CatalogStore, MAX_MAPPING_FILE_BYTES, MAX_MITRE_SOURCE_BYTES,
@@ -47,10 +45,7 @@ use tauri::{Emitter, Manager};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use crate::export::{
-    ExportFormat, ExportOutcome, render_freeform_snapshot, render_guided_snapshot,
-    requested_file_name,
-};
+use crate::export::{ExportFormat, ExportOutcome, render_freeform_snapshot, requested_file_name};
 
 pub(crate) type SharedProjectManager = Arc<Mutex<ProjectManager<OsProjectKeyStore>>>;
 type SharedCatalogStore = Arc<Mutex<CatalogStore>>;
@@ -274,6 +269,10 @@ pub(super) struct ReportProjectDataItem {
     label: String,
     summary: String,
     values: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_version: Option<String>,
 }
 
 impl From<&StixDraft> for StixDraftSummary {
@@ -304,6 +303,10 @@ fn stix_display_name(object: &ExistingStixObject) -> String {
 
 fn bounded_report_value(value: &str) -> String {
     value.trim().chars().take(4_000).collect()
+}
+
+fn bounded_report_label(value: &str) -> String {
+    value.trim().chars().take(500).collect()
 }
 
 fn readable_token(value: &str) -> String {
@@ -356,7 +359,7 @@ fn report_stix_item(object: &ExistingStixObject) -> ReportProjectDataItem {
         .iter()
         .find_map(|property| object.raw().get(*property).and_then(Value::as_str))
         .filter(|value| !value.trim().is_empty())
-        .map(bounded_report_value)
+        .map(bounded_report_label)
         .unwrap_or_else(|| format!("Unnamed {}", readable_token(object.object_type())));
     ReportProjectDataItem {
         id: object.local_id(),
@@ -364,6 +367,8 @@ fn report_stix_item(object: &ExistingStixObject) -> ReportProjectDataItem {
         object_type: object.object_type().to_owned(),
         summary: readable_token(object.object_type()),
         values: report_values_from_stix(object.raw(), &label, object.object_type()),
+        revision: None,
+        source_version: object.modified().map(str::to_owned),
         label,
     }
 }
@@ -374,7 +379,7 @@ fn report_draft_item(draft: &StixDraft) -> ReportProjectDataItem {
         .iter()
         .find_map(|property| raw.get(*property).and_then(Value::as_str))
         .filter(|value| !value.trim().is_empty())
-        .map(bounded_report_value)
+        .map(bounded_report_label)
         .unwrap_or_else(|| format!("Local {} draft", readable_token(draft.object_type())));
     ReportProjectDataItem {
         id: draft.local_id(),
@@ -382,6 +387,8 @@ fn report_draft_item(draft: &StixDraft) -> ReportProjectDataItem {
         object_type: draft.object_type().to_owned(),
         summary: format!("{} draft", readable_token(draft.object_type())),
         values: report_values_from_stix(&raw, &label, draft.object_type()),
+        revision: None,
+        source_version: None,
         label,
     }
 }
@@ -401,7 +408,7 @@ fn report_document_item(document: &DocumentEnvelope) -> ReportProjectDataItem {
                 .find_map(|inline| inline.get("text").and_then(Value::as_str))
         })
         .filter(|value| !value.trim().is_empty())
-        .map(bounded_report_value)
+        .map(bounded_report_label)
         .unwrap_or_else(|| {
             format!(
                 "Untitled {}",
@@ -420,6 +427,8 @@ fn report_document_item(document: &DocumentEnvelope) -> ReportProjectDataItem {
             ("type".to_owned(), readable_token(&object_type)),
             ("source".to_owned(), label.clone()),
         ]),
+        revision: Some(document.revision().get()),
+        source_version: None,
         label,
     }
 }
@@ -457,6 +466,8 @@ fn report_evidence_item(evidence: &EvidenceFileMetadata) -> ReportProjectDataIte
         label: evidence.title().to_owned(),
         summary: "Evidence file".to_owned(),
         values,
+        revision: Some(evidence.revision().get()),
+        source_version: None,
     }
 }
 
@@ -491,6 +502,17 @@ fn report_observation_item(
         ("explanation".to_owned(), observation.narrative().to_owned()),
         ("source".to_owned(), technique_label.clone()),
         ("type".to_owned(), "MITRE ATT&CK technique".to_owned()),
+        (
+            "catalog".to_owned(),
+            match reference.catalog() {
+                MitreCatalog::AttackEnterprise => "attack_enterprise",
+                MitreCatalog::AttackMobile => "attack_mobile",
+                MitreCatalog::AttackIcs => "attack_ics",
+                MitreCatalog::Atlas => "atlas",
+            }
+            .to_owned(),
+        ),
+        ("catalog_version".to_owned(), reference.version().to_owned()),
     ]);
     if let Some(parent_label) = parent_label {
         values.insert("parent_technique_label".to_owned(), parent_label);
@@ -507,6 +529,8 @@ fn report_observation_item(
             bounded_report_value(observation.narrative())
         },
         values,
+        revision: Some(observation.revision().get()),
+        source_version: Some(reference.version().to_owned()),
     }
 }
 
@@ -1639,57 +1663,6 @@ pub(super) async fn create_document(
 }
 
 #[tauri::command]
-pub(super) async fn list_report_templates(
-    project_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<ReportTemplateDefinition>, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let now_unix_ms = now_unix_ms()?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.list_report_templates(project_id, now_unix_ms)
-    })
-    .await
-}
-
-#[tauri::command]
-pub(super) async fn create_custom_report_template(
-    project_id: String,
-    base_template_id: String,
-    name: String,
-    description: String,
-    additional_sections: Vec<ReportTemplateSection>,
-    state: tauri::State<'_, AppState>,
-) -> Result<ReportTemplateDefinition, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let base_template_id = parse_document_id(&base_template_id)?;
-    let now_unix_ms = now_unix_ms()?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.create_custom_report_template(
-            project_id,
-            base_template_id,
-            &name,
-            &description,
-            additional_sections,
-            now_unix_ms,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-pub(super) async fn list_guided_reports(
-    project_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<GuidedReport>, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let now_unix_ms = now_unix_ms()?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.list_guided_reports(project_id, now_unix_ms)
-    })
-    .await
-}
-
-#[tauri::command]
 pub(super) async fn list_report_project_data(
     project_id: String,
     state: tauri::State<'_, AppState>,
@@ -1738,140 +1711,6 @@ pub(super) async fn list_report_project_data(
             .then_with(|| left.label.to_lowercase().cmp(&right.label.to_lowercase()))
     });
     Ok(items)
-}
-
-#[tauri::command]
-pub(super) async fn create_guided_report(
-    project_id: String,
-    template_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<GuidedReport, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let template_id = parse_document_id(&template_id)?;
-    let now_unix_ms = now_unix_ms()?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.create_guided_report(project_id, template_id, now_unix_ms)
-    })
-    .await
-}
-
-#[tauri::command]
-pub(super) async fn save_guided_report(
-    project_id: String,
-    report_id: String,
-    expected_revision: u64,
-    title: String,
-    fields: BTreeMap<String, GuidedReportFieldValue>,
-    state: tauri::State<'_, AppState>,
-) -> Result<GuidedReport, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let report_id = parse_document_id(&report_id)?;
-    let expected_revision = parse_revision(expected_revision)?;
-    let now_unix_ms = now_unix_ms()?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.save_guided_report_fields(
-            project_id,
-            report_id,
-            expected_revision,
-            &title,
-            fields,
-            now_unix_ms,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-pub(super) async fn get_guided_report_readiness(
-    project_id: String,
-    report_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<ReportReadinessWarning>, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let report_id = parse_document_id(&report_id)?;
-    let now_unix_ms = now_unix_ms()?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.guided_report_readiness(project_id, report_id, now_unix_ms)
-    })
-    .await
-}
-
-#[tauri::command]
-pub(super) async fn update_guided_report_section_disposition(
-    project_id: String,
-    report_id: String,
-    expected_revision: u64,
-    section_key: String,
-    disposition: ReportSectionDisposition,
-    state: tauri::State<'_, AppState>,
-) -> Result<GuidedReport, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let report_id = parse_document_id(&report_id)?;
-    let expected_revision = parse_revision(expected_revision)?;
-    let now_unix_ms = now_unix_ms()?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.update_guided_report_section_disposition(
-            project_id,
-            report_id,
-            expected_revision,
-            &section_key,
-            disposition,
-            now_unix_ms,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-pub(super) async fn upgrade_illicit_ecosystem_report(
-    project_id: String,
-    report_id: String,
-    expected_revision: u64,
-    state: tauri::State<'_, AppState>,
-) -> Result<GuidedReport, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let report_id = parse_document_id(&report_id)?;
-    let expected_revision = parse_revision(expected_revision)?;
-    let now_unix_ms = now_unix_ms()?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.upgrade_illicit_ecosystem_report(
-            project_id,
-            report_id,
-            expected_revision,
-            now_unix_ms,
-        )
-    })
-    .await
-}
-
-#[tauri::command]
-pub(super) async fn delete_guided_report(
-    project_id: String,
-    report_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(), CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let report_id = parse_document_id(&report_id)?;
-    let now_unix_ms = now_unix_ms()?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.delete_guided_report(project_id, report_id, now_unix_ms)
-    })
-    .await
-}
-
-#[tauri::command]
-pub(super) async fn restore_guided_report(
-    project_id: String,
-    report_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<GuidedReport, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let report_id = parse_document_id(&report_id)?;
-    let now_unix_ms = now_unix_ms()?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.restore_guided_report(project_id, report_id, now_unix_ms)
-    })
-    .await
 }
 
 #[tauri::command]
@@ -2002,6 +1841,7 @@ pub(super) async fn save_document(
     document_id: String,
     expected_revision: u64,
     root: Value,
+    report_properties: Option<ReportProperties>,
     state: tauri::State<'_, AppState>,
 ) -> Result<DocumentEnvelope, CommandError> {
     let project_id = parse_project_id(&project_id)?;
@@ -2009,31 +1849,16 @@ pub(super) async fn save_document(
     let expected_revision = parse_revision(expected_revision)?;
     let now_unix_ms = now_unix_ms()?;
     with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.save_document(
+        manager.save_document_with_properties(
             project_id,
             document_id,
             expected_revision,
             root,
+            report_properties,
             now_unix_ms,
         )
     })
     .await
-}
-
-#[tauri::command]
-pub(super) async fn render_saved_document(
-    project_id: String,
-    document_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<RenderedDocument, CommandError> {
-    let project_id = parse_project_id(&project_id)?;
-    let document_id = parse_document_id(&document_id)?;
-    let now_unix_ms = now_unix_ms()?;
-    let document = with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.load_document(project_id, document_id, now_unix_ms)
-    })
-    .await?;
-    Ok(render_document(&document))
 }
 
 #[tauri::command]
@@ -2182,8 +2007,10 @@ pub(super) async fn export_saved_document(
             let assets = publication_assets(
                 manager,
                 project_id,
+                document.id(),
                 &brand,
                 &publication.evidence_ids(),
+                &publication.document_image_ids(),
                 now_unix_ms,
             )?;
             let records = manager.list_publication_records(project_id, now_unix_ms)?;
@@ -2245,105 +2072,6 @@ pub(super) async fn export_saved_document(
 }
 
 #[tauri::command]
-pub(super) async fn export_guided_report(
-    project_id: String,
-    report_id: String,
-    options: PublicationCommandOptions,
-    state: tauri::State<'_, AppState>,
-) -> Result<ExportOutcome, CommandError> {
-    let PublicationCommandOptions {
-        format,
-        paper_size,
-        orientation,
-        tlp_marking,
-        brand_profile_id,
-        brand_profile_revision,
-        release_version,
-        publication_status,
-        include_release_history,
-        change_note,
-        page_furniture,
-        included_sections,
-        appendices,
-        file_name,
-    } = options;
-    let project_id = parse_project_id(&project_id)?;
-    let report_id = parse_document_id(&report_id)?;
-    let brand_selection = parse_brand_profile_selection(brand_profile_id, brand_profile_revision)?;
-    let now_unix_ms = now_unix_ms()?;
-    let (report, template, brand, assets, records) =
-        with_manager(Arc::clone(&state.projects), move |manager| {
-            let (report, template) =
-                manager.load_guided_report_for_publication(project_id, report_id, now_unix_ms)?;
-            let brand = publication_brand(manager, project_id, brand_selection, now_unix_ms)?;
-            let publication = PublicationIr::from_guided(&report, &template)
-                .map_err(|_| LifecycleError::from_code(LifecycleErrorCode::InvalidDocument))?;
-            let assets = publication_assets(
-                manager,
-                project_id,
-                &brand,
-                &publication.evidence_ids(),
-                now_unix_ms,
-            )?;
-            let records = manager.list_publication_records(project_id, now_unix_ms)?;
-            Ok((report, template, brand, assets, records))
-        })
-        .await?;
-    let suggested_name = requested_file_name(&file_name, format);
-    let selection = rfd::AsyncFileDialog::new()
-        .set_title("Publish Sheut guided report")
-        .set_file_name(&suggested_name)
-        .add_filter(format.filter_name(), &[format.extension()])
-        .save_file()
-        .await;
-    let Some(selection) = selection else {
-        return Ok(ExportOutcome::cancelled());
-    };
-    let path = ensure_export_extension(selection.path(), format.extension());
-    let source = PublicationSource::GuidedReport {
-        report_id: report.id(),
-        revision: report.revision(),
-    };
-    let snapshot = build_publication_snapshot(
-        source,
-        &brand,
-        format,
-        paper_size,
-        orientation,
-        tlp_marking,
-        &suggested_name,
-        &path,
-        &release_version,
-        publication_status,
-        include_release_history,
-        change_note.as_deref(),
-        page_furniture,
-        included_sections,
-        appendices,
-        &records,
-        now_unix_ms,
-    )?;
-    let (snapshot, bytes) = tauri::async_runtime::spawn_blocking(move || {
-        let bytes = render_guided_snapshot(&report, &template, &snapshot, &brand, &assets)
-            .map_err(|_| CommandError::new(LifecycleErrorCode::ExportFailed))?;
-        Ok::<_, CommandError>((snapshot, bytes))
-    })
-    .await
-    .map_err(|_| CommandError::new(LifecycleErrorCode::ExportFailed))??;
-    let record = publication_record(snapshot, &bytes)?;
-    let write_path = path.clone();
-    tauri::async_runtime::spawn_blocking(move || write_export(&write_path, &bytes))
-        .await
-        .map_err(|_| CommandError::new(LifecycleErrorCode::ExportFailed))?
-        .map_err(|_| CommandError::new(LifecycleErrorCode::ExportFailed))?;
-    with_manager(Arc::clone(&state.projects), move |manager| {
-        manager.save_publication_record(project_id, &record, now_unix_ms)
-    })
-    .await?;
-    Ok(ExportOutcome::saved())
-}
-
-#[tauri::command]
 pub(super) async fn list_publication_records(
     project_id: String,
     state: tauri::State<'_, AppState>,
@@ -2354,11 +2082,6 @@ pub(super) async fn list_publication_records(
         manager.list_publication_records(project_id, now_unix_ms)
     })
     .await
-}
-
-enum HistoricalPublication {
-    Freeform(DocumentEnvelope),
-    Guided(Box<GuidedReport>, ReportTemplateDefinition),
 }
 
 #[tauri::command]
@@ -2382,26 +2105,12 @@ pub(super) async fn reproduce_publication(
                 PublicationSource::FreeformDocument {
                     document_id,
                     revision,
-                } => HistoricalPublication::Freeform(
-                    manager.load_document_revision_for_publication(
-                        project_id,
-                        *document_id,
-                        *revision,
-                        now_unix_ms,
-                    )?,
-                ),
-                PublicationSource::GuidedReport {
-                    report_id,
-                    revision,
-                } => {
-                    let (report, template) = manager.load_guided_report_revision_for_publication(
-                        project_id,
-                        *report_id,
-                        *revision,
-                        now_unix_ms,
-                    )?;
-                    HistoricalPublication::Guided(Box::new(report), template)
-                }
+                } => manager.load_document_revision_for_publication(
+                    project_id,
+                    *document_id,
+                    *revision,
+                    now_unix_ms,
+                )?,
             };
             let default_brand_id = LocalId::parse("110b83fb-9fdb-4133-a29b-e75725bb6d0c")
                 .map_err(|_| LifecycleError::from_code(LifecycleErrorCode::InvalidDocument))?;
@@ -2415,18 +2124,15 @@ pub(super) async fn reproduce_publication(
                 })
                 .transpose()?;
             let brand = publication_brand(manager, project_id, brand_selection, now_unix_ms)?;
-            let publication = match &source {
-                HistoricalPublication::Freeform(document) => PublicationIr::from_freeform(document),
-                HistoricalPublication::Guided(report, template) => {
-                    PublicationIr::from_guided(report, template)
-                }
-            }
-            .map_err(|_| LifecycleError::from_code(LifecycleErrorCode::InvalidDocument))?;
+            let publication = PublicationIr::from_freeform(&source)
+                .map_err(|_| LifecycleError::from_code(LifecycleErrorCode::InvalidDocument))?;
             let assets = publication_assets(
                 manager,
                 project_id,
+                source.id(),
                 &brand,
                 &publication.evidence_ids(),
+                &publication.document_image_ids(),
                 now_unix_ms,
             )?;
             Ok((record, source, brand, assets))
@@ -2434,15 +2140,8 @@ pub(super) async fn reproduce_publication(
         .await?;
     let (record, bytes) = tauri::async_runtime::spawn_blocking(move || {
         let snapshot = record.snapshot();
-        let bytes = match &source {
-            HistoricalPublication::Freeform(document) => {
-                render_freeform_snapshot(document, snapshot, &brand, &assets)
-            }
-            HistoricalPublication::Guided(report, template) => {
-                render_guided_snapshot(report, template, snapshot, &brand, &assets)
-            }
-        }
-        .map_err(|_| CommandError::new(LifecycleErrorCode::ExportFailed))?;
+        let bytes = render_freeform_snapshot(&source, snapshot, &brand, &assets)
+            .map_err(|_| CommandError::new(LifecycleErrorCode::ExportFailed))?;
         Ok::<_, CommandError>((record, bytes))
     })
     .await
@@ -2507,8 +2206,10 @@ fn publication_brand(
 fn publication_assets(
     manager: &mut ProjectManager<OsProjectKeyStore>,
     project_id: LocalId,
+    document_id: LocalId,
     brand: &BrandProfile,
     evidence_ids: &[LocalId],
+    document_image_ids: &[LocalId],
     now_unix_ms: i64,
 ) -> Result<PublicationAssets, LifecycleError> {
     let mut assets = PublicationAssets::default();
@@ -2538,6 +2239,16 @@ fn publication_assets(
             assets.evidence_images.insert(*evidence_id, payload);
         }
         assets.evidence_metadata.insert(*evidence_id, metadata);
+    }
+    for attachment_id in document_image_ids {
+        if assets.document_images.contains_key(attachment_id) {
+            continue;
+        }
+        let (_, payload) =
+            manager.load_image_attachment(project_id, document_id, *attachment_id, now_unix_ms)?;
+        ImageMediaType::detect(&payload)
+            .map_err(|_| LifecycleError::from_code(LifecycleErrorCode::InvalidDocument))?;
+        assets.document_images.insert(*attachment_id, payload);
     }
     Ok(assets)
 }
@@ -2652,15 +2363,6 @@ fn same_publication_subject(left: &PublicationSource, right: &PublicationSource)
                 document_id: right, ..
             },
         ) => left == right,
-        (
-            PublicationSource::GuidedReport {
-                report_id: left, ..
-            },
-            PublicationSource::GuidedReport {
-                report_id: right, ..
-            },
-        ) => left == right,
-        _ => false,
     }
 }
 
@@ -3040,7 +2742,7 @@ pub(crate) fn parse_project_id(value: &str) -> Result<LocalId, CommandError> {
     LocalId::parse(value).map_err(|_| CommandError::new(LifecycleErrorCode::InvalidProject))
 }
 
-fn parse_document_id(value: &str) -> Result<LocalId, CommandError> {
+pub(crate) fn parse_document_id(value: &str) -> Result<LocalId, CommandError> {
     LocalId::parse(value).map_err(|_| CommandError::new(LifecycleErrorCode::InvalidDocument))
 }
 

@@ -9,11 +9,10 @@ use std::{
 };
 
 use sheut_core::{
-    AnalyticConfidence, BuiltinReportTemplate, DocumentActivityKind, DocumentEnvelope,
-    DocumentKind, DocumentTextDiffKind, EvidenceMetadataInput, GraphViewport,
-    GuidedReportFieldValue, LocalId, MitreCatalog, MitreTechniqueReference, Position,
-    ReportTemplateSection, Revision, SemanticRelationshipDraft, TechniqueAssessment,
-    TechniqueOutcome, TlpMarking, WorkspaceItemKind, WorkspaceMode,
+    AnalyticConfidence, DocumentActivityKind, DocumentEnvelope, DocumentKind, DocumentTextDiffKind,
+    EvidenceMetadataInput, GraphViewport, LocalId, MitreCatalog, MitreTechniqueReference, Position,
+    ReportProperties, Revision, SemanticRelationshipDraft, TechniqueAssessment, TechniqueOutcome,
+    TlpMarking, WorkspaceItemKind, WorkspaceMode,
 };
 use sheut_mitre::{catalog, export_mapping_file, import_mapping_file};
 use sheut_project::{
@@ -1404,87 +1403,182 @@ fn document_edits_round_trip_and_stale_revisions_fail_closed() {
 }
 
 #[test]
-fn legacy_freeform_reports_stay_encrypted_but_are_not_exposed_or_mutated() {
+fn reports_are_blank_numbered_documents_and_deleted_numbers_are_not_reused() {
+    let directory = TestDirectory::new();
+    let keys = FakeKeyStore::default();
+    let mut manager = ProjectManager::new(directory.0.clone(), keys).unwrap();
+    let project = manager.create_project("Report project", 1_000).unwrap();
+
+    let first = manager
+        .create_document(project.id(), DocumentKind::Report, 1_775_347_200_000)
+        .unwrap();
+    assert_eq!(
+        first.root(),
+        &serde_json::json!({"type": "doc", "content": [{"type": "paragraph"}]})
+    );
+    assert_eq!(
+        first.report_properties(),
+        Some(
+            &ReportProperties::new(
+                "RPT-0001",
+                "Untitled report",
+                Vec::new(),
+                None,
+                "2026-04-05",
+            )
+            .unwrap()
+        )
+    );
+
+    manager
+        .delete_document(project.id(), first.id(), 1_775_347_200_001)
+        .unwrap();
+    let second = manager
+        .create_document(project.id(), DocumentKind::Report, 1_775_347_200_002)
+        .unwrap();
+    assert_eq!(second.report_properties().unwrap().report_id(), "RPT-0002");
+    assert_eq!(
+        manager
+            .list_documents(project.id(), 1_775_347_200_003)
+            .unwrap(),
+        vec![second]
+    );
+}
+
+#[test]
+fn legacy_freeform_reports_are_promoted_without_losing_their_body() {
     let directory = TestDirectory::new();
     let keys = FakeKeyStore::default();
     let mut manager = ProjectManager::new(directory.0.clone(), keys.clone()).unwrap();
-    let project = manager
-        .create_project("Compatibility project", 1_000)
-        .unwrap();
-    let investigation = manager
-        .create_document(project.id(), DocumentKind::Investigation, 1_100)
-        .unwrap();
-    assert_eq!(
-        manager
-            .create_document(project.id(), DocumentKind::Report, 1_200)
-            .unwrap_err()
-            .code(),
-        LifecycleErrorCode::InvalidDocument
-    );
-
+    let project = manager.create_project("Legacy report", 1_000).unwrap();
+    let legacy_id = LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap();
+    let legacy_body = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "paragraph",
+            "content": [{"type": "text", "text": "Preserved historical analysis"}]
+        }]
+    });
     manager.lock_project(project.id()).unwrap();
-    let legacy = DocumentEnvelope::new(
-        LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap(),
-        DocumentKind::Report,
-        Revision::new(1).unwrap(),
-        serde_json::json!({
-            "type": "doc",
-            "content": [{
-                "type": "paragraph",
-                "content": [{"type": "text", "text": "Preserved legacy content"}]
-            }]
-        }),
-    )
-    .unwrap();
-    let database = directory
+
+    let database_path = directory
         .0
         .join(project.id().to_string())
         .join("project.sheut");
-    let key = keys.key_for(project.id());
-    let mut store = EncryptedStore::open(&database, &key).unwrap();
-    store.save_document_at(&legacy, None, 1_300).unwrap();
+    let mut store = EncryptedStore::open(&database_path, &keys.key_for(project.id())).unwrap();
+    let legacy = DocumentEnvelope::new(
+        legacy_id,
+        DocumentKind::Report,
+        Revision::new(1).unwrap(),
+        legacy_body.clone(),
+    )
+    .unwrap();
+    store.save_document_at(&legacy, None, 1_100).unwrap();
     drop(store);
 
-    manager.unlock_project(project.id(), 1_400).unwrap();
+    manager.unlock_project(project.id(), 1_200).unwrap();
+    let promoted = manager
+        .load_document(project.id(), legacy_id, 1_300)
+        .unwrap();
+    assert_eq!(promoted.revision(), Revision::new(2).unwrap());
+    assert_eq!(promoted.root(), &legacy_body);
     assert_eq!(
-        manager.list_documents(project.id(), 1_500).unwrap(),
-        vec![investigation]
+        promoted.report_properties().unwrap().report_id(),
+        "RPT-0001"
     );
     assert_eq!(
         manager
-            .load_document(project.id(), legacy.id(), 1_600)
-            .unwrap_err()
-            .code(),
-        LifecycleErrorCode::InvalidDocument
+            .list_document_revisions(project.id(), legacy_id, 1_400)
+            .unwrap()
+            .len(),
+        2
     );
+}
 
-    manager.lock_project(project.id()).unwrap();
-    let mut store = EncryptedStore::open(&database, &key).unwrap();
-    assert_eq!(
-        store.load_document(legacy.id()).unwrap(),
-        Some(legacy.clone())
-    );
-    assert!(store.soft_delete_document(legacy.id(), 1_700).unwrap());
-    assert_eq!(
-        store.load_document_record(legacy.id()).unwrap(),
-        Some(legacy.clone())
-    );
-    drop(store);
+#[test]
+fn reports_share_revision_conflict_history_activity_delete_and_restore_lifecycle() {
+    let directory = TestDirectory::new();
+    let keys = FakeKeyStore::default();
+    let mut manager = ProjectManager::new(directory.0.clone(), keys).unwrap();
+    let project = manager.create_project("Report lifecycle", 1_000).unwrap();
+    let original = manager
+        .create_document(project.id(), DocumentKind::Report, 1_775_347_200_000)
+        .unwrap();
+    let original_properties = original.report_properties().unwrap();
+    let updated_properties = ReportProperties::new(
+        original_properties.report_id(),
+        "Operation report",
+        Vec::new(),
+        Some("Analytical unit"),
+        "2026-04-06",
+    )
+    .unwrap();
+    let body = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "heading",
+            "attrs": {"level": 1},
+            "content": [{"type": "text", "text": "Assessment"}]
+        }]
+    });
 
-    manager.unlock_project(project.id(), 1_800).unwrap();
+    let saved = manager
+        .save_document_with_properties(
+            project.id(),
+            original.id(),
+            original.revision(),
+            body.clone(),
+            Some(updated_properties.clone()),
+            1_775_347_200_100,
+        )
+        .unwrap();
+    assert_eq!(saved.root(), &body);
+    assert_eq!(saved.report_properties(), Some(&updated_properties));
+
+    let stale = manager
+        .save_document(
+            project.id(),
+            original.id(),
+            original.revision(),
+            body,
+            1_775_347_200_200,
+        )
+        .unwrap_err();
+    assert_eq!(stale.code(), LifecycleErrorCode::RevisionConflict);
     assert_eq!(
         manager
-            .restore_document(project.id(), legacy.id(), 1_900)
-            .unwrap_err()
-            .code(),
-        LifecycleErrorCode::InvalidDocument
+            .list_document_revisions(project.id(), original.id(), 1_775_347_200_300)
+            .unwrap()
+            .len(),
+        2
     );
-    manager.lock_project(project.id()).unwrap();
-    let store = EncryptedStore::open(&database, &key).unwrap();
+
+    let restored_revision = manager
+        .restore_document_revision(
+            project.id(),
+            original.id(),
+            original.revision(),
+            saved.revision(),
+            1_775_347_200_400,
+        )
+        .unwrap();
+    assert_eq!(restored_revision.root(), original.root());
     assert_eq!(
-        store.load_document_record(legacy.id()).unwrap(),
-        Some(legacy)
+        restored_revision.report_properties(),
+        original.report_properties()
     );
+    let activity = manager
+        .list_document_activity(project.id(), original.id(), 1_775_347_200_500)
+        .unwrap();
+    assert_eq!(activity[0].kind(), DocumentActivityKind::RestoredRevision);
+
+    manager
+        .delete_document(project.id(), original.id(), 1_775_347_200_600)
+        .unwrap();
+    let restored_document = manager
+        .restore_document(project.id(), original.id(), 1_775_347_200_700)
+        .unwrap();
+    assert_eq!(restored_document, restored_revision);
 }
 
 #[test]
@@ -1899,188 +1993,4 @@ fn evidence_metadata_can_be_revised_and_then_deleted_inside_one_project() {
             .code(),
         LifecycleErrorCode::AttachmentNotFound
     );
-}
-
-#[test]
-fn custom_report_templates_copy_a_builtin_and_survive_reopen() {
-    let directory = TestDirectory::new();
-    let keys = FakeKeyStore::default();
-    let mut manager = ProjectManager::new(directory.0.clone(), keys.clone()).unwrap();
-    let project = manager.create_project("Custom reports", 1_000).unwrap();
-    let base = manager
-        .list_report_templates(project.id(), 1_100)
-        .unwrap()
-        .into_iter()
-        .find(|template| template.name() == "Campaign Report")
-        .unwrap();
-    let base_section_count = base.sections().len();
-    let custom_section: ReportTemplateSection = serde_json::from_value(serde_json::json!({
-        "key": "custom_social_profiles",
-        "title": "Social profiles",
-        "optional": true,
-        "fields": [{
-            "key": "custom_social_profiles_table",
-            "label": "Social profiles",
-            "help_text": null,
-            "kind": "repeatable_rows",
-            "required": false,
-            "columns": ["Platform", "Handle", "Profile link", "Source"]
-        }]
-    }))
-    .unwrap();
-
-    let created = manager
-        .create_custom_report_template(
-            project.id(),
-            base.id(),
-            "Piracy Ecosystem Report",
-            "Tracks sites, infrastructure, identities, and social profiles.",
-            vec![custom_section],
-            1_200,
-        )
-        .unwrap();
-    assert_eq!(created.revision().get(), 1);
-    assert_eq!(created.sections().len(), base_section_count + 1);
-    assert_eq!(
-        created.sections().last().unwrap().key(),
-        "custom_social_profiles"
-    );
-
-    manager.lock_project(project.id()).unwrap();
-    drop(manager);
-    let mut reopened = ProjectManager::new(directory.0.clone(), keys).unwrap();
-    reopened.unlock_project(project.id(), 1_300).unwrap();
-    let restored = reopened
-        .list_report_templates(project.id(), 1_400)
-        .unwrap()
-        .into_iter()
-        .find(|template| template.id() == created.id())
-        .unwrap();
-    assert_eq!(restored, created);
-    let report = reopened
-        .create_guided_report(project.id(), restored.id(), 1_500)
-        .unwrap();
-    assert_eq!(report.template_id(), restored.id());
-    assert_eq!(
-        report.fields().get("report_number"),
-        Some(&GuidedReportFieldValue::Text("RPT-0001".to_owned()))
-    );
-    assert!(
-        report
-            .included_sections()
-            .iter()
-            .any(|key| key == "custom_social_profiles")
-    );
-}
-
-#[test]
-fn guided_report_deletion_requires_an_unlocked_project_and_can_be_undone() {
-    let directory = TestDirectory::new();
-    let keys = FakeKeyStore::default();
-    let mut manager = ProjectManager::new(directory.0.clone(), keys).unwrap();
-    let project = manager.create_project("Report deletion", 1_000).unwrap();
-    let template = manager
-        .list_report_templates(project.id(), 1_100)
-        .unwrap()
-        .into_iter()
-        .find(|template| template.builtin() == Some(BuiltinReportTemplate::BlankGuidedReport))
-        .unwrap();
-    let report = manager
-        .create_guided_report(project.id(), template.id(), 1_200)
-        .unwrap();
-
-    manager
-        .delete_guided_report(project.id(), report.id(), 1_300)
-        .unwrap();
-    assert!(
-        manager
-            .list_guided_reports(project.id(), 1_400)
-            .unwrap()
-            .is_empty()
-    );
-    assert_eq!(
-        manager
-            .delete_guided_report(project.id(), report.id(), 1_500)
-            .unwrap_err()
-            .code(),
-        LifecycleErrorCode::DocumentNotFound
-    );
-
-    let restored = manager
-        .restore_guided_report(project.id(), report.id(), 1_600)
-        .unwrap();
-    assert_eq!(restored, report);
-
-    manager.lock_project(project.id()).unwrap();
-    assert_eq!(
-        manager
-            .delete_guided_report(project.id(), report.id(), 1_700)
-            .unwrap_err()
-            .code(),
-        LifecycleErrorCode::ProjectLocked
-    );
-}
-
-#[test]
-fn guided_report_numbers_use_template_prefixes_and_are_never_reused() {
-    let directory = TestDirectory::new();
-    let keys = FakeKeyStore::default();
-    let mut manager = ProjectManager::new(directory.0.clone(), keys.clone()).unwrap();
-    let project = manager.create_project("Report numbering", 1_000).unwrap();
-    let templates = manager.list_report_templates(project.id(), 1_100).unwrap();
-    let expected = [
-        ("Threat Actor Profile", "TAP-0001"),
-        ("Intrusion Analysis", "IA-0001"),
-        ("Campaign Report", "CR-0001"),
-        ("Executive Report", "ER-0001"),
-        ("Blank Guided Report", "RPT-0001"),
-        ("Illicit Ecosystem Report", "IER-0001"),
-    ];
-    for (offset, (template_name, expected_number)) in expected.into_iter().enumerate() {
-        let template = templates
-            .iter()
-            .find(|template| template.name() == template_name)
-            .unwrap();
-        let report = manager
-            .create_guided_report(
-                project.id(),
-                template.id(),
-                1_200 + i64::try_from(offset).unwrap() * 100,
-            )
-            .unwrap();
-        assert_eq!(
-            report.fields().get("report_number"),
-            Some(&GuidedReportFieldValue::Text(expected_number.to_owned()))
-        );
-        assert_eq!(report.revision(), Revision::new(1).unwrap());
-    }
-
-    let campaign = templates
-        .iter()
-        .find(|template| template.name() == "Campaign Report")
-        .unwrap();
-    let second = manager
-        .create_guided_report(project.id(), campaign.id(), 1_800)
-        .unwrap();
-    assert_eq!(
-        second.fields().get("report_number"),
-        Some(&GuidedReportFieldValue::Text("CR-0002".to_owned()))
-    );
-
-    manager
-        .delete_guided_report(project.id(), second.id(), 1_900)
-        .unwrap();
-    manager.lock_project(project.id()).unwrap();
-    drop(manager);
-
-    let mut reopened = ProjectManager::new(directory.0.clone(), keys).unwrap();
-    reopened.unlock_project(project.id(), 2_000).unwrap();
-    let third = reopened
-        .create_guided_report(project.id(), campaign.id(), 2_100)
-        .unwrap();
-    assert_eq!(
-        third.fields().get("report_number"),
-        Some(&GuidedReportFieldValue::Text("CR-0003".to_owned()))
-    );
-    assert_eq!(third.revision(), Revision::new(1).unwrap());
 }

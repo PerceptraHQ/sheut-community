@@ -3,23 +3,22 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { listBrandProfiles } from "../lib/brand-profiles";
 import { listDocuments } from "../lib/documents";
+import { listEvidenceFiles } from "../lib/evidence";
 import { listGraphWorkspaces } from "../lib/graph";
-import { listEvidenceFiles, listGuidedReports } from "../lib/guided-reports";
 import { listStixDrafts, listStixObjects } from "../lib/stix";
 import { ProjectOverview } from "./ProjectOverview";
 
 vi.mock("../lib/documents", () => ({ listDocuments: vi.fn() }));
-vi.mock("../lib/guided-reports", () => ({
-  listEvidenceFiles: vi.fn(),
-  listGuidedReports: vi.fn(),
-}));
+vi.mock("../lib/evidence", () => ({ listEvidenceFiles: vi.fn() }));
 vi.mock("../lib/stix", () => ({ listStixDrafts: vi.fn(), listStixObjects: vi.fn() }));
 vi.mock("../lib/graph", () => ({ listGraphWorkspaces: vi.fn() }));
 vi.mock("../lib/brand-profiles", () => ({ listBrandProfiles: vi.fn() }));
 
 beforeEach(() => {
-  vi.mocked(listDocuments).mockResolvedValue([]);
-  vi.mocked(listGuidedReports).mockResolvedValue([{} as never, {} as never]);
+  vi.mocked(listDocuments).mockResolvedValue([
+    { kind: "report" } as never,
+    { kind: "report" } as never,
+  ]);
   vi.mocked(listEvidenceFiles).mockResolvedValue([
     {
       id: "21a6b93a-06ac-4f91-b0a3-46b58af592d1",
@@ -61,7 +60,7 @@ it("summarizes the unlocked project and offers workspace quick actions", async (
     />,
   );
 
-  expect(await screen.findByText("2 guided reports")).toBeVisible();
+  expect(await screen.findByText("2 reports")).toBeVisible();
   expect(screen.getByText("1 evidence file")).toBeVisible();
   expect(screen.getByText("4 intelligence items")).toBeVisible();
   expect(screen.getByText("TLP:AMBER+STRICT")).toBeVisible();

@@ -92,4 +92,31 @@ describe("buildProjectSearchResults", () => {
 
     expect(result?.keywords.join(" ").length).toBeLessThanOrEqual(12_500);
   });
+
+  it("uses canonical product labels for every document kind", () => {
+    const results = buildProjectSearchResults({
+      documents: [
+        { ...document, id: "note", kind: "analyst_note" },
+        {
+          ...document,
+          id: "report",
+          kind: "report",
+          reportProperties: {
+            reportId: "RPT-0001",
+            title: "Assessment",
+            authors: [],
+            issueDate: "2026-08-03",
+          },
+        },
+      ],
+      objects: [],
+      drafts: [],
+      workspaces: [],
+    });
+
+    expect(results.map((result) => result.description)).toEqual([
+      "Analyst Note · revision 3",
+      "Report · revision 3",
+    ]);
+  });
 });
