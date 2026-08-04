@@ -295,7 +295,7 @@ describe("App", () => {
         name: "Project default TLP marking",
       }),
     );
-    await user.click(screen.getByRole("option", { name: "TLP:RED — Named recipients" }));
+    await user.click(await screen.findByRole("option", { name: "TLP:RED — Named recipients" }));
     await waitFor(() =>
       expect(projectsApi.updateProjectDefaultTlp).toHaveBeenCalledWith(PROJECT_ID, "red"),
     );
