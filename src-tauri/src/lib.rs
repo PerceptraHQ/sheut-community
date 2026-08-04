@@ -9,6 +9,7 @@ mod commands;
 mod desktop_menu;
 mod export;
 mod graph;
+mod graph_snapshot;
 mod telemetry;
 
 pub fn run() {

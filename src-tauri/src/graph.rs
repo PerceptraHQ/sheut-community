@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
 use std::sync::Arc;
 
-use image::{ImageEncoder, Rgba, RgbaImage, codecs::png::PngEncoder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sheut_core::{
@@ -18,6 +16,7 @@ use crate::commands::{
     AppState, CommandError, StixDraftSummary, now_unix_ms, parse_project_id, parse_revision,
     with_manager,
 };
+use crate::graph_snapshot::{SnapshotEdge, SnapshotEdgeKind, SnapshotNode, SnapshotNodeKind};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -246,7 +245,7 @@ pub(crate) struct GraphNodeSummary {
     timeline_dates: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct GraphWorkspaceView {
     workspace: GraphWorkspace,
@@ -646,142 +645,55 @@ pub(crate) async fn create_graph_snapshot_attachment(
 fn render_graph_snapshot_png(
     view: &GraphWorkspaceView,
 ) -> Result<Vec<u8>, sheut_project::LifecycleError> {
-    const WIDTH: u32 = 1600;
-    const HEIGHT: u32 = 900;
-    const MARGIN: f64 = 100.0;
-    let mut image = RgbaImage::from_pixel(WIDTH, HEIGHT, Rgba([248, 250, 252, 255]));
     let positions = view
         .items
         .iter()
         .map(|item| (item.item_id(), item.position()))
         .collect::<HashMap<_, _>>();
-    let (min_x, max_x, min_y, max_y) = graph_position_bounds(positions.values().copied());
-    let project = |position: Position| {
-        let available_width = f64::from(WIDTH) - MARGIN * 2.0;
-        let available_height = f64::from(HEIGHT) - MARGIN * 2.0;
-        let x = MARGIN + (position.x - min_x) / (max_x - min_x).max(1.0) * available_width;
-        let y = MARGIN + (position.y - min_y) / (max_y - min_y).max(1.0) * available_height;
-        (x.round() as i32, y.round() as i32)
-    };
-    for edge in &view.edges {
-        let (Some(source), Some(target)) = (
-            positions.get(&edge.source_id),
-            positions.get(&edge.target_id),
-        ) else {
-            continue;
-        };
-        draw_line(
-            &mut image,
-            project(*source),
-            project(*target),
-            Rgba([89, 105, 122, 255]),
-        );
-    }
-    for node in &view.nodes {
-        let Some(position) = positions.get(&node.id) else {
-            continue;
-        };
-        let fill = if !node.available {
-            Rgba([154, 164, 175, 255])
-        } else {
-            match node.item_kind {
-                WorkspaceItemKind::Intelligence => Rgba([3, 79, 158, 255]),
-                WorkspaceItemKind::Evidence => Rgba([49, 90, 60, 255]),
-                WorkspaceItemKind::Document => Rgba([122, 31, 31, 255]),
-                WorkspaceItemKind::CatalogReference => Rgba([96, 56, 152, 255]),
-            }
-        };
-        draw_node(&mut image, project(*position), fill);
-    }
-    let mut payload = Cursor::new(Vec::new());
-    PngEncoder::new(&mut payload)
-        .write_image(
-            image.as_raw(),
-            WIDTH,
-            HEIGHT,
-            image::ExtendedColorType::Rgba8,
-        )
-        .map_err(|_| {
-            sheut_project::LifecycleError::from_code(LifecycleErrorCode::InvalidAttachment)
-        })?;
-    Ok(payload.into_inner())
-}
-
-fn graph_position_bounds(positions: impl Iterator<Item = Position>) -> (f64, f64, f64, f64) {
-    let mut bounds = (
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-    );
-    for position in positions {
-        bounds.0 = bounds.0.min(position.x);
-        bounds.1 = bounds.1.max(position.x);
-        bounds.2 = bounds.2.min(position.y);
-        bounds.3 = bounds.3.max(position.y);
-    }
-    if !bounds.0.is_finite() {
-        (0.0, 1.0, 0.0, 1.0)
-    } else {
-        bounds
-    }
-}
-
-fn draw_line(image: &mut RgbaImage, start: (i32, i32), end: (i32, i32), color: Rgba<u8>) {
-    let (mut x0, mut y0) = start;
-    let (x1, y1) = end;
-    let dx = (x1 - x0).abs();
-    let sx = if x0 < x1 { 1 } else { -1 };
-    let dy = -(y1 - y0).abs();
-    let sy = if y0 < y1 { 1 } else { -1 };
-    let mut error = dx + dy;
-    loop {
-        if let (Ok(x), Ok(y)) = (u32::try_from(x0), u32::try_from(y0))
-            && x < image.width()
-            && y < image.height()
-        {
-            image.put_pixel(x, y, color);
-        }
-        if x0 == x1 && y0 == y1 {
-            break;
-        }
-        let doubled = error * 2;
-        if doubled >= dy {
-            error += dy;
-            x0 += sx;
-        }
-        if doubled <= dx {
-            error += dx;
-            y0 += sy;
-        }
-    }
-}
-
-fn draw_node(image: &mut RgbaImage, center: (i32, i32), fill: Rgba<u8>) {
-    const HALF_WIDTH: i32 = 44;
-    const HALF_HEIGHT: i32 = 24;
-    for y in center.1 - HALF_HEIGHT..=center.1 + HALF_HEIGHT {
-        for x in center.0 - HALF_WIDTH..=center.0 + HALF_WIDTH {
-            let border = x == center.0 - HALF_WIDTH
-                || x == center.0 + HALF_WIDTH
-                || y == center.1 - HALF_HEIGHT
-                || y == center.1 + HALF_HEIGHT;
-            if let (Ok(x), Ok(y)) = (u32::try_from(x), u32::try_from(y))
-                && x < image.width()
-                && y < image.height()
-            {
-                image.put_pixel(
-                    x,
-                    y,
-                    if border {
-                        Rgba([15, 23, 42, 255])
-                    } else {
-                        fill
-                    },
-                );
-            }
-        }
-    }
+    let nodes = view
+        .nodes
+        .iter()
+        .filter_map(|node| {
+            let position = positions.get(&node.id)?;
+            Some(SnapshotNode {
+                id: node.id.to_string(),
+                x: position.x,
+                y: position.y,
+                kind: match node.item_kind {
+                    WorkspaceItemKind::Intelligence => SnapshotNodeKind::Intelligence,
+                    WorkspaceItemKind::Evidence => SnapshotNodeKind::Evidence,
+                    WorkspaceItemKind::Document => SnapshotNodeKind::Document,
+                    WorkspaceItemKind::CatalogReference => SnapshotNodeKind::CatalogReference,
+                },
+                object_type: node.object_type.clone(),
+                display_name: node.display_name.clone(),
+                available: node.available,
+            })
+        })
+        .collect::<Vec<_>>();
+    let edges = view
+        .edges
+        .iter()
+        .map(|edge| SnapshotEdge {
+            source_id: edge.source_id.to_string(),
+            target_id: edge.target_id.to_string(),
+            label: if edge.label.trim().is_empty() {
+                readable_relationship_name(&edge.canonical_label)
+            } else {
+                edge.label.clone()
+            },
+            kind: match edge.kind {
+                GraphEdgeKind::Semantic => SnapshotEdgeKind::Semantic,
+                GraphEdgeKind::Reference => SnapshotEdgeKind::Reference,
+                GraphEdgeKind::Visual => SnapshotEdgeKind::Visual,
+                GraphEdgeKind::Draft => SnapshotEdgeKind::Draft,
+            },
+            directed: edge.directed,
+        })
+        .collect::<Vec<_>>();
+    crate::graph_snapshot::render(&nodes, &edges).map_err(|()| {
+        sheut_project::LifecycleError::from_code(LifecycleErrorCode::InvalidAttachment)
+    })
 }
 
 #[tauri::command]
@@ -1376,5 +1288,91 @@ mod tests {
         assert!(first.starts_with(b"\x89PNG\r\n\x1a\n"));
         let decoded = image::load_from_memory(&first).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (1600, 900));
+        let centered_icon_colors = decoded
+            .crop_imm(782, 432, 37, 37)
+            .to_rgba8()
+            .pixels()
+            .copied()
+            .collect::<HashSet<_>>();
+        assert!(
+            centered_icon_colors.len() > 8,
+            "the frozen node must contain its STIX icon instead of a flat placeholder"
+        );
+
+        let mut changed_type = view.clone();
+        changed_type.nodes[0].object_type = "malware".to_owned();
+        assert_ne!(first, render_graph_snapshot_png(&changed_type).unwrap());
+
+        let mut changed_name = view.clone();
+        changed_name.nodes[0].display_name = "Different indicator name".to_owned();
+        assert_ne!(first, render_graph_snapshot_png(&changed_name).unwrap());
+    }
+
+    #[test]
+    fn graph_snapshots_preserve_relationship_label_direction_and_kind() {
+        let workspace_id = LocalId::parse("4f3d8e34-7c64-4d41-8b68-d7a334e1a884").unwrap();
+        let source_id = LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap();
+        let target_id = LocalId::parse("04c230e7-e13f-4f68-a8b4-da72a31bcb13").unwrap();
+        let workspace = GraphWorkspace::new(
+            workspace_id,
+            "Relationship fixture",
+            WorkspaceMode::View,
+            GraphViewport::new(0.0, 0.0, 1.0).unwrap(),
+            1_000,
+        )
+        .unwrap();
+        let item = |item_id, x| {
+            WorkspaceItem::new(
+                workspace_id,
+                item_id,
+                WorkspaceItemKind::Intelligence,
+                Position::new(x, 60.0).unwrap(),
+                false,
+            )
+        };
+        let node = |id, object_type: &str, display_name: &str| GraphNodeSummary {
+            id,
+            item_kind: WorkspaceItemKind::Intelligence,
+            object_type: object_type.to_owned(),
+            display_name: display_name.to_owned(),
+            available: true,
+            source_view: "intelligence".to_owned(),
+            stix_id: None,
+            timeline_dates: Vec::new(),
+        };
+        let edge = |kind, source_id, target_id, label: &str| GraphEdgeSummary {
+            id: format!("{source_id}:{target_id}"),
+            kind,
+            source_id,
+            target_id,
+            label: readable_relationship_name(label),
+            canonical_label: label.to_owned(),
+            directed: true,
+        };
+        let view = GraphWorkspaceView {
+            workspace,
+            items: vec![item(source_id, 20.0), item(target_id, 100.0)],
+            nodes: vec![
+                node(source_id, "threat-actor", "Fixture actor"),
+                node(target_id, "malware", "Fixture malware"),
+            ],
+            edges: vec![edge(GraphEdgeKind::Semantic, source_id, target_id, "uses")],
+        };
+        let uses = render_graph_snapshot_png(&view).unwrap();
+
+        let mut different_label = view.clone();
+        different_label.edges[0].label = "Targets".to_owned();
+        different_label.edges[0].canonical_label = "targets".to_owned();
+        assert_ne!(uses, render_graph_snapshot_png(&different_label).unwrap());
+
+        let mut reversed = view.clone();
+        reversed.edges[0].source_id = target_id;
+        reversed.edges[0].target_id = source_id;
+        assert_ne!(uses, render_graph_snapshot_png(&reversed).unwrap());
+
+        let mut visual = view;
+        visual.edges[0].kind = GraphEdgeKind::Visual;
+        visual.edges[0].directed = false;
+        assert_ne!(uses, render_graph_snapshot_png(&visual).unwrap());
     }
 }
