@@ -1,15 +1,15 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import * as evidenceApi from "../lib/guided-reports";
+import * as evidenceApi from "../lib/evidence";
 import { EvidenceWorkspace } from "./EvidenceWorkspace";
 
 const noticeSpies = vi.hoisted(() => ({ add: vi.fn(), promise: vi.fn() }));
 
 vi.mock("./VaultNotices", () => ({ useVaultNotices: () => noticeSpies }));
 
-vi.mock("../lib/guided-reports", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../lib/guided-reports")>()),
+vi.mock("../lib/evidence", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/evidence")>()),
   importEvidenceFile: vi.fn(),
   importEvidenceImage: vi.fn(),
   deleteEvidenceFile: vi.fn(),

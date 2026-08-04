@@ -19,7 +19,7 @@ import {
   listEvidenceFiles,
   loadEvidenceImage,
   updateEvidenceMetadata,
-} from "../lib/guided-reports";
+} from "../lib/evidence";
 import { AlertDialogFrame } from "./AlertDialogFrame";
 import { useVaultNotices } from "./VaultNotices";
 import { WorkspaceEmptyState, WorkspaceLoadingState } from "./WorkspaceState";

@@ -105,7 +105,10 @@ export function SettingsWorkspace({
       </aside>
 
       <div className="min-h-0 overflow-y-auto">
-        <Tabs.Panel className="mx-auto max-w-3xl px-8 py-10" value="appearance">
+        <Tabs.Panel
+          className="mx-auto w-full px-8 py-10 xl:max-w-5xl 2xl:max-w-7xl"
+          value="appearance"
+        >
           <SettingsHeading
             title="Appearance & layout"
             description="Shape the workbench around the current analysis task. These preferences stay on this device."
@@ -161,7 +164,7 @@ export function SettingsWorkspace({
           </div>
         </Tabs.Panel>
 
-        <Tabs.Panel className="mx-auto max-w-3xl px-8 py-10" value="data">
+        <Tabs.Panel className="mx-auto w-full px-8 py-10 xl:max-w-5xl 2xl:max-w-7xl" value="data">
           <SettingsHeading
             title="Data & security"
             description="Community keeps ordinary project work local and offline."
@@ -220,12 +223,18 @@ export function SettingsWorkspace({
         </Tabs.Panel>
 
         {projectId && projectName ? (
-          <Tabs.Panel className="mx-auto max-w-4xl px-8 py-10" value="brand">
+          <Tabs.Panel
+            className="mx-auto w-full px-8 py-10 xl:max-w-6xl 2xl:max-w-[96rem]"
+            value="brand"
+          >
             <BrandStudio projectId={projectId} projectName={projectName} />
           </Tabs.Panel>
         ) : null}
 
-        <Tabs.Panel className="mx-auto max-w-6xl px-8 py-10" value="help">
+        <Tabs.Panel
+          className="mx-auto w-full px-8 py-10 xl:max-w-7xl 2xl:max-w-[104rem]"
+          value="help"
+        >
           <SettingsHeading
             title="Help & guides"
             description="Offline guidance for choosing, completing, validating, and publishing every document and report type."
@@ -233,7 +242,7 @@ export function SettingsWorkspace({
           <ReportHelpGuides initialTopic={initialHelpTopic} />
         </Tabs.Panel>
 
-        <Tabs.Panel className="mx-auto max-w-3xl px-8 py-10" value="about">
+        <Tabs.Panel className="mx-auto w-full px-8 py-10 xl:max-w-5xl 2xl:max-w-7xl" value="about">
           <SettingsHeading
             title="About Sheut Community"
             description="A local-first cyber threat intelligence workbench by PerceptraHQ."

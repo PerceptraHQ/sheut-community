@@ -20,13 +20,7 @@ export const DESKTOP_ACTION_IDS = [
   "view.toggle-secondary-sidebar",
   "view.toggle-zen",
   "help.guides",
-  "help.guide.investigations-and-analyst-notes",
-  "help.guide.threat-actor-profile",
-  "help.guide.intrusion-analysis",
-  "help.guide.campaign-report",
-  "help.guide.executive-report",
-  "help.guide.blank-guided-report",
-  "help.guide.illicit-ecosystem-report",
+  "help.guide.document-native-reports",
   "help.about",
 ] as const;
 

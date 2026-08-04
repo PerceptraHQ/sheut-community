@@ -357,7 +357,6 @@ function tauriMockSource() {
         if (command === "list_projects") return [{ id: projectId, name: "Reference project", locked: true, unlockMethod: "device", defaultTlpMarking: "amber" }];
         if (command === "unlock_project") return { id: projectId, name: "Reference project", locked: false, unlockMethod: "device", defaultTlpMarking: "amber" };
         if (command === "list_documents") return [document];
-        if (command === "list_guided_reports" || command === "list_report_templates") return [];
         if (command === "load_document") return document;
         if (command === "load_document_image") {
           const canvas = window.document.createElement("canvas");

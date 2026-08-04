@@ -19,6 +19,11 @@ description = "Allows loading one graph workspace from the active local project.
 commands.allow = ["load_graph_workspace"]
 
 [[permission]]
+identifier = "allow-create-graph-snapshot-attachment"
+description = "Allows rendering one revision-checked graph PNG into an encrypted document attachment."
+commands.allow = ["create_graph_snapshot_attachment"]
+
+[[permission]]
 identifier = "allow-rename-graph-workspace"
 description = "Allows revision-checked graph workspace renaming."
 commands.allow = ["rename_graph_workspace"]

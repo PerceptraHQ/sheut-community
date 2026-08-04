@@ -89,45 +89,27 @@ describe("SettingsWorkspace", () => {
     expect(screen.getByText("No Brand Profiles yet.")).toBeVisible();
   });
 
-  it("provides offline help for every guided template and freeform documents", async () => {
+  it("provides offline help for document-native reports", async () => {
     const user = userEvent.setup();
     render(<SettingsWorkspace layout={DEFAULT_WORKBENCH_LAYOUT} onLayoutChange={vi.fn()} />);
 
     await user.click(screen.getByRole("tab", { name: "Help & guides" }));
 
-    expect(screen.getByRole("tab", { name: "Investigations and analyst notes" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Threat Actor Profile" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Intrusion Analysis" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Campaign Report" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Executive Report" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Blank Guided Report" })).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Illicit Ecosystem Report" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Document-native reports" })).toBeVisible();
   });
 
   it("opens a requested report guide directly", () => {
     render(
       <SettingsWorkspace
-        initialHelpTopic="illicit-ecosystem-report"
+        initialHelpTopic="document-native-reports"
         initialSection="help"
         layout={DEFAULT_WORKBENCH_LAYOUT}
         onLayoutChange={vi.fn()}
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "Illicit Ecosystem Report" })).toBeVisible();
-    expect(screen.getByText(/sites, infrastructure, certificates, identities/i)).toBeVisible();
-    expect(
-      screen.getByRole("table", { name: "Illicit Ecosystem Report field examples" }),
-    ).toBeVisible();
-    expect(screen.getByText("Site inventory — Domain or URL")).toBeVisible();
-    expect(screen.getAllByText("stream-hub[.]example").length).toBeGreaterThan(0);
-    expect(screen.getByRole("columnheader", { name: "STIX or project source" })).toBeVisible();
-    expect(
-      screen.getAllByText(/Create in Intelligence as Domain Name or URL/i).length,
-    ).toBeGreaterThan(0);
-    expect(screen.getByText(/Do not create one STIX object per cell/i)).toBeVisible();
-    expect(screen.getByText(/Start each section in the narrative canvas/i)).toBeVisible();
-    expect(screen.getByText(/readiness recommendations are advisory/i)).toBeVisible();
-    expect(screen.queryByText("Report status")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Document-native reports" })).toBeVisible();
+    expect(screen.getByText(/Reports are blank, revisioned documents/i)).toBeVisible();
+    expect(screen.getByText(/Typst produces the only publication format: PDF/i)).toBeVisible();
   });
 });

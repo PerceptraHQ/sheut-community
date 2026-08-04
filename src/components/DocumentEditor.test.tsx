@@ -214,6 +214,18 @@ const document: DocumentEnvelope = {
   },
 };
 
+const reportDocument: DocumentEnvelope = {
+  ...document,
+  kind: "report",
+  reportProperties: {
+    reportId: "RPT-0001",
+    title: "Untitled report",
+    authors: [],
+    producingOrganisation: null,
+    issueDate: "2026-08-04",
+  },
+};
+
 describe("DocumentEditor", () => {
   beforeEach(() => {
     editorState.activeTable = false;
@@ -240,9 +252,9 @@ describe("DocumentEditor", () => {
       />,
     );
 
-    expect(screen.getByRole("toolbar", { name: "Document formatting" })).toBeVisible();
+    expect(screen.getByRole("toolbar", { name: "Document toolbar" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Heading 3" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Show more formatting" }));
+    await user.click(screen.getByRole("button", { name: "More formatting" }));
     await user.click(screen.getByRole("button", { name: "Align center" }));
     await user.click(screen.getByRole("button", { name: "Justify" }));
 
@@ -250,8 +262,7 @@ describe("DocumentEditor", () => {
     expect(editorCommandSpies.setTextAlign).toHaveBeenNthCalledWith(2, "justify");
   });
 
-  it("uses recognizable toolbar icons instead of letter abbreviations", async () => {
-    const user = userEvent.setup();
+  it("uses recognizable toolbar icons instead of letter abbreviations", () => {
     const { container } = render(
       <DocumentEditor
         projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
@@ -261,8 +272,6 @@ describe("DocumentEditor", () => {
         onBusyChange={vi.fn()}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Show more formatting" }));
-
     for (const label of [
       "Add or edit link",
       "Strikethrough",
@@ -278,7 +287,7 @@ describe("DocumentEditor", () => {
     expect(screen.getByRole("button", { name: "Add or edit link" })).not.toHaveTextContent("Ln");
   });
 
-  it("keeps common formatting visible while additional formatting expands like an accordion", async () => {
+  it("keeps one responsive toolbar and expands secondary formatting without wrapping", async () => {
     const user = userEvent.setup();
     render(
       <DocumentEditor
@@ -291,27 +300,42 @@ describe("DocumentEditor", () => {
       />,
     );
 
-    const actions = screen.getByRole("toolbar", { name: "Document actions" });
-    expect(within(actions).getByRole("button", { name: "Save document" })).toBeVisible();
-    expect(within(actions).getByRole("button", { name: "Undo" })).toBeVisible();
-    expect(within(actions).getByRole("button", { name: "Redo" })).toBeVisible();
-    expect(within(actions).getByRole("button", { name: "Export document" })).toBeVisible();
-    const formatting = screen.getByRole("toolbar", { name: "Document formatting" });
-    expect(formatting).not.toHaveClass("editor-toolbar-scroll");
-    expect(within(formatting).queryByRole("button", { name: "Save document" })).toBeNull();
-    expect(within(formatting).queryByRole("button", { name: "Undo" })).toBeNull();
-    expect(within(formatting).getByRole("button", { name: "Bold" })).toBeVisible();
-    expect(screen.queryByRole("toolbar", { name: "Additional formatting" })).toBeNull();
-    const showMore = screen.getByRole("button", { name: "Show more formatting" });
-    expect(showMore).toHaveAttribute("aria-expanded", "false");
-    await user.click(showMore);
-    expect(screen.getByRole("toolbar", { name: "Additional formatting" })).toBeVisible();
-    expect(screen.getByRole("toolbar", { name: "Document actions" })).toBeVisible();
-    const hideMore = screen.getByRole("button", { name: "Hide more formatting" });
-    expect(hideMore).toHaveAttribute("aria-expanded", "true");
-    await user.click(hideMore);
-    expect(screen.queryByRole("toolbar", { name: "Additional formatting" })).toBeNull();
-    expect(screen.getByRole("toolbar", { name: "Document formatting" })).toBeVisible();
+    const toolbar = screen.getByRole("toolbar", { name: "Document toolbar" });
+    expect(screen.getAllByRole("toolbar")).toHaveLength(1);
+    expect(within(toolbar).getByRole("button", { name: "Save document" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Undo" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Redo" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Export document" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Bold" })).toBeVisible();
+    const more = within(toolbar).getByRole("button", { name: "More formatting" });
+    expect(more).toHaveAttribute("aria-expanded", "false");
+    await user.click(more);
+    expect(more).toHaveAttribute("aria-expanded", "true");
+    expect(within(toolbar).getByRole("button", { name: "Strikethrough" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Align center" })).toBeVisible();
+    expect(within(toolbar).getByRole("button", { name: "Insert table" })).toBeVisible();
+  });
+
+  it("keeps report insertion actions in one menu without duplicate toolbar buttons", async () => {
+    const user = userEvent.setup();
+    render(
+      <DocumentEditor
+        projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+        document={reportDocument}
+        onSaved={vi.fn()}
+        onReload={vi.fn()}
+        onBusyChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByRole("toolbar")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Attach image" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Insert table" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Insert report content" }));
+    const menu = await screen.findByRole("dialog", { name: "Insert report content" });
+    for (const label of ["Evidence", "Image", "Table", /Page break/]) {
+      expect(within(menu).getByText(label)).toBeVisible();
+    }
   });
 
   it("uses the available workspace width instead of constraining the editor chrome", () => {
@@ -349,7 +373,7 @@ describe("DocumentEditor", () => {
     expect(screen.getByRole("dialog", { name: "Publish document" })).toHaveClass("max-w-[48rem]");
     const fileName = screen.getByRole("textbox", { name: "File name" });
     expect(fileName).toHaveValue("Original");
-    await user.click(screen.getByRole("button", { name: "PDF" }));
+    expect(screen.getByText("PDF")).toBeVisible();
     await user.click(screen.getByRole("combobox", { name: "Paper size" }));
     await user.click(screen.getByRole("option", { name: "Letter US Letter" }));
     await user.click(screen.getByRole("combobox", { name: "Orientation" }));
@@ -424,7 +448,6 @@ describe("DocumentEditor", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Show more formatting" }));
     await user.click(screen.getByRole("button", { name: "Insert table" }));
     await user.click(screen.getByRole("button", { name: "Insert callout" }));
 
@@ -492,10 +515,9 @@ describe("DocumentEditor", () => {
       />,
     );
 
-    expect(screen.queryByRole("toolbar", { name: "Table editing" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Show more formatting" }));
+    expect(screen.queryByLabelText("Table editing")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Insert table" }));
-    expect(screen.getByRole("toolbar", { name: "Table editing" })).toBeVisible();
+    expect(screen.getByLabelText("Table editing")).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: "Add row above" }));
     await user.click(screen.getByRole("button", { name: "Add row below" }));

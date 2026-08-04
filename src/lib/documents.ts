@@ -1,8 +1,32 @@
 /** Structured-document and publication contracts; native paths remain Rust-owned. */
 import { invoke } from "@tauri-apps/api/core";
 
-export type DocumentKind = "investigation" | "analyst_note";
+export type DocumentKind = "investigation" | "analyst_note" | "report";
 export type NewDocumentKind = DocumentKind;
+
+export function documentKindLabel(kind: DocumentKind): string {
+  switch (kind) {
+    case "investigation":
+      return "Investigation";
+    case "analyst_note":
+      return "Analyst Note";
+    case "report":
+      return "Report";
+  }
+}
+
+export interface ReportAuthor {
+  name: string;
+  role?: string | null;
+}
+
+export interface ReportProperties {
+  reportId: string;
+  title: string;
+  authors: ReportAuthor[];
+  producingOrganisation?: string | null;
+  issueDate: string;
+}
 
 export interface DocumentJsonNode {
   type: string;
@@ -22,6 +46,7 @@ export interface DocumentEnvelope {
   kind: DocumentKind;
   revision: number;
   root: DocumentRoot;
+  reportProperties?: ReportProperties;
 }
 
 export interface RenderedDocument {
@@ -29,7 +54,7 @@ export interface RenderedDocument {
   plainText: string;
 }
 
-export type DocumentExportFormat = "html" | "pdf" | "docx";
+export type DocumentExportFormat = "pdf";
 export type PublicationPaperSize = "a4" | "letter";
 export type PublicationOrientation = "portrait" | "landscape";
 export type PublicationStatus = "draft" | "final";
@@ -67,9 +92,11 @@ export interface DocumentExportOutcome {
   saved: boolean;
 }
 
-export type PublicationSource =
-  | { type: "freeform_document"; document_id: string; revision: number }
-  | { type: "guided_report"; report_id: string; revision: number };
+export type PublicationSource = {
+  type: "freeform_document";
+  document_id: string;
+  revision: number;
+};
 
 export interface PublicationReleaseEntry {
   version: string;
@@ -233,12 +260,14 @@ export function saveDocument(
   documentId: string,
   expectedRevision: number,
   root: DocumentRoot,
+  reportProperties?: ReportProperties,
 ): Promise<DocumentEnvelope> {
   return invoke<DocumentEnvelope>("save_document", {
     projectId,
     documentId,
     expectedRevision,
     root,
+    reportProperties,
   });
 }
 
@@ -346,6 +375,7 @@ export function loadDocumentImage(
 }
 
 export function documentTitle(document: DocumentEnvelope): string {
+  if (document.kind === "report") return document.reportProperties?.title ?? "Untitled report";
   const title = firstText(document.root)?.trim();
   if (!title) {
     if (document.kind === "analyst_note") return "Untitled analyst note";

@@ -6,7 +6,7 @@ import {
   listReportProjectData,
   type ProjectDataSelection,
   type ReportProjectDataItem,
-} from "../lib/guided-reports";
+} from "../lib/report-data";
 import { DialogFrame } from "./DialogFrame";
 
 interface ProjectDataPickerProps {

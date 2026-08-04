@@ -25,6 +25,7 @@ tauri = { version = "=2.11.5", features = ["isolation"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+image.workspace = true
 sheut-core = { path = "../crates/sheut-core" }
 sheut-mitre = { path = "../crates/sheut-mitre" }
 sheut-project = { path = "../crates/sheut-project" }

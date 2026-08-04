@@ -17,10 +17,9 @@ use sha2::{Digest, Sha256};
 use sheut_core::{
     BrandAssetMetadata, BrandAssetRole, BrandProfile, DocumentActivityEntry, DocumentActivityKind,
     DocumentEnvelope, DocumentRevisionSummary, EvidenceFileMetadata, EvidenceMetadataInput,
-    GraphViewport, GraphWorkspace, GraphWorkspaceSnapshot, GuidedReport, ImageAttachmentMetadata,
-    ImageMediaType, LocalId, MAX_GRAPH_MUTATION_BATCH, MAX_GRAPH_VISUAL_LINKS,
-    MAX_GRAPH_WORKSPACE_ITEMS, Position, ProjectMetadata, PublicationRecord,
-    ReportTemplateDefinition, Revision, SemanticRelationshipDraft, TechniqueObservation,
+    GraphViewport, GraphWorkspace, GraphWorkspaceSnapshot, ImageAttachmentMetadata, ImageMediaType,
+    LocalId, MAX_GRAPH_MUTATION_BATCH, MAX_GRAPH_VISUAL_LINKS, MAX_GRAPH_WORKSPACE_ITEMS, Position,
+    ProjectMetadata, PublicationRecord, Revision, SemanticRelationshipDraft, TechniqueObservation,
     VisualLink, WorkspaceItem, WorkspaceItemKind, WorkspaceMode, detect_evidence_media_type,
 };
 use sheut_stix::{ExistingStixObject, ImportCommit, StixDraft};
@@ -340,6 +339,24 @@ const MIGRATIONS: &[Migration] = &[
             ) STRICT;
         ",
     },
+    Migration {
+        version: 15,
+        sql: "
+            DELETE FROM publication_history
+            WHERE json_valid(CAST(payload AS TEXT))
+              AND json_extract(CAST(payload AS TEXT), '$.snapshot.source.type') = 'guided_report';
+
+            DELETE FROM guided_report_revisions;
+            DELETE FROM guided_reports;
+            DELETE FROM report_template_revisions;
+            DELETE FROM report_templates;
+
+            DROP TABLE guided_report_revisions;
+            DROP TABLE guided_reports;
+            DROP TABLE report_template_revisions;
+            DROP TABLE report_templates;
+        ",
+    },
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -623,58 +640,6 @@ impl EncryptedStore {
             .collect()
     }
 
-    pub fn save_guided_report(
-        &mut self,
-        report: &GuidedReport,
-        expected_revision: Option<Revision>,
-    ) -> Result<(), StoreError> {
-        let payload = encode_payload(report)?;
-        self.save_revisioned_payload(
-            report.id(),
-            report.revision(),
-            expected_revision,
-            report.updated_at_unix_ms(),
-            report.deleted_at_unix_ms(),
-            &payload,
-            queries::insert_guided_report,
-            queries::update_guided_report,
-            queries::insert_guided_report_revision,
-        )
-    }
-
-    pub fn load_guided_report(&self, id: LocalId) -> Result<Option<GuidedReport>, StoreError> {
-        decode_optional_payload(
-            queries::load_guided_report(&self.connection, &id.to_string())
-                .map_err(|_| StoreError::new(StoreErrorCode::StorageUnavailable))?,
-        )
-    }
-
-    pub fn load_guided_report_revision(
-        &self,
-        id: LocalId,
-        revision: Revision,
-    ) -> Result<Option<GuidedReport>, StoreError> {
-        let revision = revision_to_i64(revision)?;
-        decode_optional_payload(
-            queries::load_guided_report_revision(&self.connection, &id.to_string(), revision)
-                .map_err(|_| StoreError::new(StoreErrorCode::StorageUnavailable))?,
-        )
-    }
-
-    pub fn list_guided_reports(&self) -> Result<Vec<GuidedReport>, StoreError> {
-        decode_payloads(
-            queries::list_guided_reports(&self.connection)
-                .map_err(|_| StoreError::new(StoreErrorCode::StorageUnavailable))?,
-        )
-    }
-
-    pub fn list_all_guided_reports(&self) -> Result<Vec<GuidedReport>, StoreError> {
-        decode_payloads(
-            queries::list_all_guided_reports(&self.connection)
-                .map_err(|_| StoreError::new(StoreErrorCode::StorageUnavailable))?,
-        )
-    }
-
     pub fn reserve_report_number(
         &mut self,
         prefix: &str,
@@ -718,73 +683,6 @@ impl EncryptedStore {
             .commit()
             .map_err(|_| StoreError::new(StoreErrorCode::StorageUnavailable))?;
         u64::try_from(allocated).map_err(|_| StoreError::new(StoreErrorCode::InvalidStoredData))
-    }
-
-    pub fn soft_delete_guided_report(
-        &self,
-        id: LocalId,
-        deleted_at_unix_ms: i64,
-    ) -> Result<bool, StoreError> {
-        if deleted_at_unix_ms < 0 {
-            return Err(StoreError::new(StoreErrorCode::InvalidStoredData));
-        }
-        queries::soft_delete_guided_report(&self.connection, &id.to_string(), deleted_at_unix_ms)
-            .map(|changed| changed == 1)
-            .map_err(|_| StoreError::new(StoreErrorCode::StorageUnavailable))
-    }
-
-    pub fn restore_guided_report(&self, id: LocalId) -> Result<bool, StoreError> {
-        queries::restore_guided_report(&self.connection, &id.to_string())
-            .map(|changed| changed == 1)
-            .map_err(|_| StoreError::new(StoreErrorCode::StorageUnavailable))
-    }
-
-    pub fn save_report_template(
-        &mut self,
-        template: &ReportTemplateDefinition,
-        expected_revision: Option<Revision>,
-    ) -> Result<(), StoreError> {
-        let payload = encode_payload(template)?;
-        self.save_revisioned_payload(
-            template.id(),
-            template.revision(),
-            expected_revision,
-            0,
-            None,
-            &payload,
-            queries::insert_report_template,
-            queries::update_report_template,
-            queries::insert_report_template_revision,
-        )
-    }
-
-    pub fn load_report_template(
-        &self,
-        id: LocalId,
-    ) -> Result<Option<ReportTemplateDefinition>, StoreError> {
-        decode_optional_payload(
-            queries::load_report_template(&self.connection, &id.to_string())
-                .map_err(|_| StoreError::new(StoreErrorCode::StorageUnavailable))?,
-        )
-    }
-
-    pub fn load_report_template_revision(
-        &self,
-        id: LocalId,
-        revision: Revision,
-    ) -> Result<Option<ReportTemplateDefinition>, StoreError> {
-        let revision = revision_to_i64(revision)?;
-        decode_optional_payload(
-            queries::load_report_template_revision(&self.connection, &id.to_string(), revision)
-                .map_err(|_| StoreError::new(StoreErrorCode::StorageUnavailable))?,
-        )
-    }
-
-    pub fn list_report_templates(&self) -> Result<Vec<ReportTemplateDefinition>, StoreError> {
-        decode_payloads(
-            queries::list_report_templates(&self.connection)
-                .map_err(|_| StoreError::new(StoreErrorCode::StorageUnavailable))?,
-        )
     }
 
     pub fn save_brand_profile(
@@ -2476,6 +2374,96 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guided_reporting_cleanup_migration_removes_only_guided_data() {
+        let cleanup_index = MIGRATIONS
+            .iter()
+            .position(|migration| migration.version == 15)
+            .expect("guided reporting cleanup migration");
+        let mut connection = Connection::open_in_memory().unwrap();
+        apply_migrations(&mut connection, &MIGRATIONS[..cleanup_index]).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                INSERT INTO documents (id, revision, payload)
+                    VALUES ('document', 1, x'7b7d');
+                INSERT INTO guided_reports (id, revision, payload)
+                    VALUES ('guided', 1, x'7b7d');
+                INSERT INTO guided_report_revisions (report_id, revision, saved_at_unix_ms, payload)
+                    VALUES ('guided', 1, 1, x'7b7d');
+                INSERT INTO report_templates (id, revision, payload)
+                    VALUES ('template', 1, x'7b7d');
+                INSERT INTO report_template_revisions (template_id, revision, saved_at_unix_ms, payload)
+                    VALUES ('template', 1, 1, x'7b7d');
+                INSERT INTO technique_observations (id, revision, payload)
+                    VALUES ('observation', 1, x'7b7d');
+                INSERT INTO graph_workspaces (id, revision, payload)
+                    VALUES ('graph', 1, x'7b7d');
+                INSERT INTO brand_profiles (id, revision, payload)
+                    VALUES ('brand', 1, x'7b7d');
+                INSERT INTO evidence_files (
+                    id, media_type, file_name, byte_len, sha256, created_at_unix_ms, payload,
+                    revision, title, description, source, source_url, tags_json, analyst_notes,
+                    updated_at_unix_ms
+                ) VALUES (
+                    'evidence', 'text/plain', 'evidence.txt', 1,
+                    '0000000000000000000000000000000000000000000000000000000000000000',
+                    1, x'78', 1, 'Evidence', '', '', '', '[]', '', 1
+                );
+                INSERT INTO report_number_sequences (prefix, next_value) VALUES ('RPT', 7);
+                INSERT INTO publication_history (id, created_at_unix_ms, payload) VALUES
+                    ('guided-publication', 1,
+                     CAST('{"snapshot":{"source":{"type":"guided_report"}}}' AS BLOB)),
+                    ('document-publication', 2,
+                     CAST('{"snapshot":{"source":{"type":"freeform_document"}}}' AS BLOB));
+                "#,
+            )
+            .unwrap();
+
+        apply_migrations(&mut connection, &MIGRATIONS[cleanup_index..]).unwrap();
+
+        for removed in [
+            "guided_reports",
+            "guided_report_revisions",
+            "report_templates",
+            "report_template_revisions",
+        ] {
+            let exists = connection
+                .query_row(
+                    "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = ?1",
+                    [removed],
+                    |row| row.get::<_, u32>(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 0, "{removed} must be dropped");
+        }
+        for preserved in [
+            "documents",
+            "technique_observations",
+            "graph_workspaces",
+            "brand_profiles",
+            "evidence_files",
+            "report_number_sequences",
+        ] {
+            let count = connection
+                .query_row(&format!("SELECT count(*) FROM {preserved}"), [], |row| {
+                    row.get::<_, u32>(0)
+                })
+                .unwrap();
+            assert_eq!(count, 1, "{preserved} must be preserved");
+        }
+        let publications = connection
+            .query_row("SELECT count(*) FROM publication_history", [], |row| {
+                row.get::<_, u32>(0)
+            })
+            .unwrap();
+        assert_eq!(publications, 1);
+        let surviving_publication: String = connection
+            .query_row("SELECT id FROM publication_history", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(surviving_publication, "document-publication");
+    }
 
     #[test]
     fn failed_migration_rolls_back_schema_and_version() {

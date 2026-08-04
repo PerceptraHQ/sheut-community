@@ -68,6 +68,19 @@ export interface GraphWorkspaceView {
   edges: GraphEdgeSummary[];
 }
 
+export interface GraphSnapshotAttachment {
+  attachment: {
+    id: string;
+    documentId: string;
+    mediaType: "image/png";
+    fileName: string;
+    byteLen: number;
+  };
+  workspaceId: string;
+  workspaceRevision: number;
+  workspaceName: string;
+}
+
 export interface GraphItemProperties {
   node: GraphNodeSummary;
   properties: unknown;
@@ -103,6 +116,20 @@ export function createGraphWorkspace(
 
 export function loadGraphWorkspace(projectId: string, workspaceId: string) {
   return invoke<GraphWorkspaceView>("load_graph_workspace", { projectId, workspaceId });
+}
+
+export function createGraphSnapshotAttachment(
+  projectId: string,
+  documentId: string,
+  workspaceId: string,
+  expectedRevision: number,
+) {
+  return invoke<GraphSnapshotAttachment>("create_graph_snapshot_attachment", {
+    projectId,
+    documentId,
+    workspaceId,
+    expectedRevision,
+  });
 }
 
 export function renameGraphWorkspace(

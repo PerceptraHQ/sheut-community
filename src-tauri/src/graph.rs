@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Cursor;
 use std::sync::Arc;
 
+use image::{ImageEncoder, Rgba, RgbaImage, codecs::png::PngEncoder};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sheut_core::{
-    DocumentEnvelope, DocumentKind, GraphViewport, GraphWorkspace, GraphWorkspaceSnapshot, LocalId,
-    Position, Revision, TechniqueObservation, VisualLink, WorkspaceItem, WorkspaceItemKind,
-    WorkspaceMode,
+    DocumentEnvelope, DocumentKind, GraphViewport, GraphWorkspace, GraphWorkspaceSnapshot,
+    ImageAttachmentMetadata, LocalId, Position, Revision, TechniqueObservation, VisualLink,
+    WorkspaceItem, WorkspaceItemKind, WorkspaceMode,
 };
 use sheut_project::{GraphWorkspaceSeedItem, LifecycleErrorCode};
 use sheut_stix::{ExistingStixObject, StixDraft};
@@ -27,6 +29,15 @@ struct GraphEdgeSummary {
     label: String,
     canonical_label: String,
     directed: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GraphSnapshotAttachment {
+    attachment: ImageAttachmentMetadata,
+    workspace_id: LocalId,
+    workspace_revision: Revision,
+    workspace_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -594,6 +605,186 @@ pub(crate) async fn load_graph_workspace(
 }
 
 #[tauri::command]
+pub(crate) async fn create_graph_snapshot_attachment(
+    project_id: String,
+    document_id: String,
+    workspace_id: String,
+    expected_revision: u64,
+    state: tauri::State<'_, AppState>,
+) -> Result<GraphSnapshotAttachment, CommandError> {
+    let project_id = parse_project_id(&project_id)?;
+    let document_id = crate::commands::parse_document_id(&document_id)?;
+    let workspace_id = parse_workspace_id(&workspace_id)?;
+    let expected_revision = parse_revision(expected_revision)?;
+    let now = now_unix_ms()?;
+    with_manager(Arc::clone(&state.projects), move |manager| {
+        let snapshot = manager.load_graph_workspace(project_id, workspace_id, now)?;
+        if snapshot.workspace().revision() != expected_revision {
+            return Err(sheut_project::LifecycleError::from_code(
+                LifecycleErrorCode::RevisionConflict,
+            ));
+        }
+        let objects = manager.list_stix_objects(project_id, now)?;
+        let drafts = manager.list_stix_drafts(project_id, now)?;
+        let documents = manager.list_documents(project_id, now)?;
+        let observations = manager.list_technique_observations(project_id, now)?;
+        let view = resolve_graph_view(snapshot, &objects, &drafts, &documents, &observations);
+        let payload = render_graph_snapshot_png(&view)?;
+        let file_name = format!("graph-{}-r{}.png", workspace_id, expected_revision.get());
+        let attachment =
+            manager.create_image_attachment(project_id, document_id, file_name, payload, now)?;
+        Ok(GraphSnapshotAttachment {
+            attachment,
+            workspace_id,
+            workspace_revision: expected_revision,
+            workspace_name: view.workspace.name().to_owned(),
+        })
+    })
+    .await
+}
+
+fn render_graph_snapshot_png(
+    view: &GraphWorkspaceView,
+) -> Result<Vec<u8>, sheut_project::LifecycleError> {
+    const WIDTH: u32 = 1600;
+    const HEIGHT: u32 = 900;
+    const MARGIN: f64 = 100.0;
+    let mut image = RgbaImage::from_pixel(WIDTH, HEIGHT, Rgba([248, 250, 252, 255]));
+    let positions = view
+        .items
+        .iter()
+        .map(|item| (item.item_id(), item.position()))
+        .collect::<HashMap<_, _>>();
+    let (min_x, max_x, min_y, max_y) = graph_position_bounds(positions.values().copied());
+    let project = |position: Position| {
+        let available_width = f64::from(WIDTH) - MARGIN * 2.0;
+        let available_height = f64::from(HEIGHT) - MARGIN * 2.0;
+        let x = MARGIN + (position.x - min_x) / (max_x - min_x).max(1.0) * available_width;
+        let y = MARGIN + (position.y - min_y) / (max_y - min_y).max(1.0) * available_height;
+        (x.round() as i32, y.round() as i32)
+    };
+    for edge in &view.edges {
+        let (Some(source), Some(target)) = (
+            positions.get(&edge.source_id),
+            positions.get(&edge.target_id),
+        ) else {
+            continue;
+        };
+        draw_line(
+            &mut image,
+            project(*source),
+            project(*target),
+            Rgba([89, 105, 122, 255]),
+        );
+    }
+    for node in &view.nodes {
+        let Some(position) = positions.get(&node.id) else {
+            continue;
+        };
+        let fill = if !node.available {
+            Rgba([154, 164, 175, 255])
+        } else {
+            match node.item_kind {
+                WorkspaceItemKind::Intelligence => Rgba([3, 79, 158, 255]),
+                WorkspaceItemKind::Evidence => Rgba([49, 90, 60, 255]),
+                WorkspaceItemKind::Document => Rgba([122, 31, 31, 255]),
+                WorkspaceItemKind::CatalogReference => Rgba([96, 56, 152, 255]),
+            }
+        };
+        draw_node(&mut image, project(*position), fill);
+    }
+    let mut payload = Cursor::new(Vec::new());
+    PngEncoder::new(&mut payload)
+        .write_image(
+            image.as_raw(),
+            WIDTH,
+            HEIGHT,
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|_| {
+            sheut_project::LifecycleError::from_code(LifecycleErrorCode::InvalidAttachment)
+        })?;
+    Ok(payload.into_inner())
+}
+
+fn graph_position_bounds(positions: impl Iterator<Item = Position>) -> (f64, f64, f64, f64) {
+    let mut bounds = (
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for position in positions {
+        bounds.0 = bounds.0.min(position.x);
+        bounds.1 = bounds.1.max(position.x);
+        bounds.2 = bounds.2.min(position.y);
+        bounds.3 = bounds.3.max(position.y);
+    }
+    if !bounds.0.is_finite() {
+        (0.0, 1.0, 0.0, 1.0)
+    } else {
+        bounds
+    }
+}
+
+fn draw_line(image: &mut RgbaImage, start: (i32, i32), end: (i32, i32), color: Rgba<u8>) {
+    let (mut x0, mut y0) = start;
+    let (x1, y1) = end;
+    let dx = (x1 - x0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let dy = -(y1 - y0).abs();
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut error = dx + dy;
+    loop {
+        if let (Ok(x), Ok(y)) = (u32::try_from(x0), u32::try_from(y0))
+            && x < image.width()
+            && y < image.height()
+        {
+            image.put_pixel(x, y, color);
+        }
+        if x0 == x1 && y0 == y1 {
+            break;
+        }
+        let doubled = error * 2;
+        if doubled >= dy {
+            error += dy;
+            x0 += sx;
+        }
+        if doubled <= dx {
+            error += dx;
+            y0 += sy;
+        }
+    }
+}
+
+fn draw_node(image: &mut RgbaImage, center: (i32, i32), fill: Rgba<u8>) {
+    const HALF_WIDTH: i32 = 44;
+    const HALF_HEIGHT: i32 = 24;
+    for y in center.1 - HALF_HEIGHT..=center.1 + HALF_HEIGHT {
+        for x in center.0 - HALF_WIDTH..=center.0 + HALF_WIDTH {
+            let border = x == center.0 - HALF_WIDTH
+                || x == center.0 + HALF_WIDTH
+                || y == center.1 - HALF_HEIGHT
+                || y == center.1 + HALF_HEIGHT;
+            if let (Ok(x), Ok(y)) = (u32::try_from(x), u32::try_from(y))
+                && x < image.width()
+                && y < image.height()
+            {
+                image.put_pixel(
+                    x,
+                    y,
+                    if border {
+                        Rgba([15, 23, 42, 255])
+                    } else {
+                        fill
+                    },
+                );
+            }
+        }
+    }
+}
+
+#[tauri::command]
 pub(crate) async fn list_graph_source_items(
     project_id: String,
     state: tauri::State<'_, AppState>,
@@ -1142,5 +1333,48 @@ mod tests {
                 "2020-01-04T00:00:00.000Z",
             ]
         );
+    }
+
+    #[test]
+    fn graph_snapshots_are_deterministic_valid_pngs() {
+        let workspace_id = LocalId::parse("4f3d8e34-7c64-4d41-8b68-d7a334e1a884").unwrap();
+        let item_id = LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap();
+        let workspace = GraphWorkspace::new(
+            workspace_id,
+            "Snapshot fixture",
+            WorkspaceMode::View,
+            GraphViewport::new(0.0, 0.0, 1.0).unwrap(),
+            1_000,
+        )
+        .unwrap();
+        let view = GraphWorkspaceView {
+            workspace,
+            items: vec![WorkspaceItem::new(
+                workspace_id,
+                item_id,
+                WorkspaceItemKind::Intelligence,
+                Position::new(40.0, 60.0).unwrap(),
+                false,
+            )],
+            nodes: vec![GraphNodeSummary {
+                id: item_id,
+                item_kind: WorkspaceItemKind::Intelligence,
+                object_type: "indicator".to_owned(),
+                display_name: "Fixture indicator".to_owned(),
+                available: true,
+                source_view: "intelligence".to_owned(),
+                stix_id: None,
+                timeline_dates: Vec::new(),
+            }],
+            edges: Vec::new(),
+        };
+
+        let first = render_graph_snapshot_png(&view).unwrap();
+        let second = render_graph_snapshot_png(&view).unwrap();
+
+        assert_eq!(first, second);
+        assert!(first.starts_with(b"\x89PNG\r\n\x1a\n"));
+        let decoded = image::load_from_memory(&first).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (1600, 900));
     }
 }

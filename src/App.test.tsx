@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import "./components/InvestigationsWorkspace";
 import * as documentsApi from "./lib/documents";
-import * as guidedReportsApi from "./lib/guided-reports";
 import * as projectsApi from "./lib/projects";
 import * as telemetryApi from "./lib/telemetry";
 
@@ -45,16 +44,6 @@ vi.mock("./lib/projects", async (importOriginal) => {
   };
 });
 
-vi.mock("./lib/guided-reports", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("./lib/guided-reports")>();
-  return {
-    ...actual,
-    createGuidedReport: vi.fn(),
-    listGuidedReports: vi.fn(),
-    listReportTemplates: vi.fn(),
-  };
-});
-
 vi.mock("./lib/telemetry", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./lib/telemetry")>();
   return {
@@ -66,17 +55,6 @@ vi.mock("./lib/telemetry", async (importOriginal) => {
 });
 
 const PROJECT_ID = "019b0dc2-34c8-7c31-a2e5-c447222ce0b9";
-const CAMPAIGN_TEMPLATE_ID = "4c8680ad-3f8c-53df-b94d-405cb3dc231f";
-const campaignTemplate: guidedReportsApi.ReportTemplateDefinition = {
-  schema_version: 1,
-  id: CAMPAIGN_TEMPLATE_ID,
-  revision: 1,
-  builtin: "campaign_report",
-  name: "Campaign Report",
-  description: "Analyze a coordinated malicious or criminal campaign.",
-  sections: [],
-};
-
 describe("App", () => {
   beforeEach(() => {
     vi.mocked(projectsApi.createProject).mockReset();
@@ -102,11 +80,6 @@ describe("App", () => {
     vi.mocked(documentsApi.loadDocument).mockReset();
     vi.mocked(documentsApi.renderSavedDocument).mockReset();
     vi.mocked(documentsApi.saveDocument).mockReset();
-    vi.mocked(guidedReportsApi.createGuidedReport).mockReset();
-    vi.mocked(guidedReportsApi.listGuidedReports).mockReset().mockResolvedValue([]);
-    vi.mocked(guidedReportsApi.listReportTemplates)
-      .mockReset()
-      .mockResolvedValue([campaignTemplate]);
     vi.mocked(telemetryApi.getTelemetryPreference)
       .mockReset()
       .mockResolvedValue({ consent: "disabled" });
@@ -382,7 +355,7 @@ describe("App", () => {
     await user.click(screen.getByRole("button", { name: "Documents" }));
 
     expect(await screen.findByRole("heading", { name: "Documents" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "New investigation" }));
+    await user.click(screen.getByRole("button", { name: "New Investigation" }));
     await waitFor(() =>
       expect(documentsApi.createDocument).toHaveBeenCalledWith(PROJECT_ID, "investigation"),
     );
@@ -391,10 +364,10 @@ describe("App", () => {
 
     const openDocuments = screen.getByRole("tablist", { name: "Open documents" });
     const workspaceTabs = screen.getByRole("navigation", { name: "Workspace tabs" });
-    expect(within(workspaceTabs).getByRole("button", { name: "Quick note" })).toBeVisible();
-    expect(within(workspaceTabs).getByRole("button", { name: "New investigation" })).toBeVisible();
-    expect(within(workspaceTabs).getByRole("button", { name: "New analyst note" })).toBeVisible();
-    expect(within(workspaceTabs).getByRole("button", { name: "New report" })).toBeVisible();
+    expect(within(workspaceTabs).getByRole("button", { name: "Quick Note" })).toBeVisible();
+    expect(within(workspaceTabs).getByRole("button", { name: "New Investigation" })).toBeVisible();
+    expect(within(workspaceTabs).getByRole("button", { name: "New Analyst Note" })).toBeVisible();
+    expect(within(workspaceTabs).getByRole("button", { name: "New Report" })).toBeVisible();
     expect(within(workspaceTabs).getByRole("tablist", { name: "Open documents" })).toBe(
       openDocuments,
     );
@@ -471,7 +444,7 @@ describe("App", () => {
     await user.type(within(createDialog).getByLabelText("Project name"), "Operation Shadow");
     await user.click(within(createDialog).getByRole("button", { name: "Create project" }));
     await user.click(screen.getByRole("button", { name: "Documents" }));
-    await user.click(await screen.findByRole("button", { name: "New investigation" }));
+    await user.click(await screen.findByRole("button", { name: "New Investigation" }));
 
     const notice = await screen.findByRole("dialog", { name: "Investigation not created" });
     expect(notice).toHaveTextContent("The encrypted project store is unavailable");
@@ -487,40 +460,40 @@ describe("App", () => {
       unlockMethod: "device",
       defaultTlpMarking: "amber",
     });
-    vi.mocked(documentsApi.createDocument).mockResolvedValue({
-      schema_version: 1,
-      id: "e7c44850-9f67-4d26-b7e3-0d4ee82339ef",
-      kind: "analyst_note",
-      revision: 1,
-      root: {
-        type: "doc",
-        content: [
-          {
-            type: "heading",
-            attrs: { level: 1 },
-            content: [
-              {
-                type: "text",
-                text: "Untitled analyst note",
+    vi.mocked(documentsApi.createDocument).mockImplementation((_projectId, kind) =>
+      Promise.resolve({
+        schema_version: 1,
+        id:
+          kind === "report"
+            ? "d35e8b1e-10c7-4ee5-9f2b-c6ac197ca8eb"
+            : "e7c44850-9f67-4d26-b7e3-0d4ee82339ef",
+        kind,
+        revision: 1,
+        root:
+          kind === "report"
+            ? { type: "doc", content: [{ type: "paragraph" }] }
+            : {
+                type: "doc",
+                content: [
+                  {
+                    type: "heading",
+                    attrs: { level: 1 },
+                    content: [{ type: "text", text: "Untitled analyst note" }],
+                  },
+                ],
               },
-            ],
-          },
-        ],
-      },
-    });
-    vi.mocked(guidedReportsApi.createGuidedReport).mockResolvedValue({
-      schema_version: 1,
-      id: "d35e8b1e-10c7-4ee5-9f2b-c6ac197ca8eb",
-      revision: 1,
-      template_id: CAMPAIGN_TEMPLATE_ID,
-      template_revision: 1,
-      title: "Untitled Campaign Report",
-      included_sections: [],
-      fields: {},
-      created_at_unix_ms: 1,
-      updated_at_unix_ms: 1,
-      deleted_at_unix_ms: null,
-    });
+        reportProperties:
+          kind === "report"
+            ? {
+                reportId: "RPT-0001",
+                title: "Untitled report",
+                authors: [],
+                producingOrganisation: null,
+                issueDate: "2026-08-03",
+              }
+            : undefined,
+      }),
+    );
     render(<App />);
 
     await user.click(await screen.findByRole("button", { name: "Create project" }));
@@ -531,10 +504,10 @@ describe("App", () => {
 
     const workspaceTabs = await screen.findByRole("navigation", { name: "Workspace tabs" });
     expect(
-      await within(workspaceTabs).findByRole("button", { name: "New analyst note" }),
+      await within(workspaceTabs).findByRole("button", { name: "New Analyst Note" }),
     ).toBeVisible();
-    expect(within(workspaceTabs).getByRole("button", { name: "New investigation" })).toBeVisible();
-    await user.click(within(workspaceTabs).getByRole("button", { name: "Quick note" }));
+    expect(within(workspaceTabs).getByRole("button", { name: "New Investigation" })).toBeVisible();
+    await user.click(within(workspaceTabs).getByRole("button", { name: "Quick Note" }));
     expect((await screen.findAllByText("Untitled analyst note")).length).toBeGreaterThan(0);
 
     const documentExplorer = screen.getByRole("complementary", { name: "Document explorer" });
@@ -552,16 +525,10 @@ describe("App", () => {
       ),
     );
 
-    await user.click(within(workspaceTabs).getByRole("button", { name: "New report" }));
-    const reportDialog = await screen.findByRole("dialog", { name: "New guided report" });
-    await user.click(within(reportDialog).getByRole("button", { name: /Campaign Report/ }));
-    expect((await screen.findAllByText("Untitled Campaign Report")).length).toBeGreaterThan(0);
-    expect(documentsApi.createDocument).toHaveBeenCalledOnce();
+    await user.click(within(workspaceTabs).getByRole("button", { name: "New Report" }));
+    expect((await screen.findAllByText("Untitled report")).length).toBeGreaterThan(0);
     expect(documentsApi.createDocument).toHaveBeenCalledWith(PROJECT_ID, "analyst_note");
-    expect(guidedReportsApi.createGuidedReport).toHaveBeenCalledWith(
-      PROJECT_ID,
-      CAMPAIGN_TEMPLATE_ID,
-    );
+    expect(documentsApi.createDocument).toHaveBeenCalledWith(PROJECT_ID, "report");
   });
 
   it("shows a redacted recovery-oriented message when project creation fails", async () => {
@@ -770,6 +737,8 @@ describe("App", () => {
     await user.click(await screen.findByRole("button", { name: "Create recovery point" }));
     await waitFor(() => expect(projectsApi.createProjectBackup).toHaveBeenCalledWith(PROJECT_ID));
     expect(await screen.findByRole("dialog", { name: "Recovery point saved" })).toBeVisible();
+    expect(screen.getByText("Latest recovery point")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Create another recovery point" })).toBeVisible();
   });
 
   it("restores a selected device recovery point without a frontend path", async () => {

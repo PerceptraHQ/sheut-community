@@ -1,4 +1,5 @@
-import { Collapsible } from "@base-ui/react/collapsible";
+import { Button } from "@base-ui/react/button";
+import { Popover } from "@base-ui/react/popover";
 import { Toggle } from "@base-ui/react/toggle";
 import { ToggleGroup } from "@base-ui/react/toggle-group";
 import { Toolbar } from "@base-ui/react/toolbar";
@@ -12,15 +13,15 @@ import {
   IconArrowForwardUp,
   IconBlockquote,
   IconBold,
-  IconChevronDown,
-  IconChevronUp,
   IconCode,
   IconCodeDots,
   IconColumnInsertLeft,
   IconColumnInsertRight,
   IconColumnRemove,
   IconDeviceFloppy,
+  IconDots,
   IconFileExport,
+  IconFileText,
   IconH1,
   IconH2,
   IconH3,
@@ -31,12 +32,14 @@ import {
   IconList,
   IconListCheck,
   IconListNumbers,
+  IconListTree,
   IconPhotoPlus,
   IconPilcrow,
   IconRowInsertBottom,
   IconRowInsertTop,
   IconRowRemove,
   IconSeparatorHorizontal,
+  IconSettings,
   IconShieldCheck,
   IconStrikethrough,
   IconSubscript,
@@ -47,8 +50,15 @@ import {
 } from "@tabler/icons-react";
 import type { Editor } from "@tiptap/core";
 import { useEditorState } from "@tiptap/react";
-import { type ReactElement, type ReactNode, useState } from "react";
+import { type ReactElement, type ReactNode, useEffect, useState } from "react";
 import { defangIndicatorText } from "../lib/editor-content";
+import {
+  REPORT_FONT_FAMILIES,
+  REPORT_FONT_SIZES,
+  REPORT_LINE_SPACING,
+  REPORT_PARAGRAPH_SPACING,
+  REPORT_TEXT_COLORS,
+} from "../lib/semantic-formatting-extension";
 
 interface DocumentToolbarProps {
   editor: Editor;
@@ -57,9 +67,26 @@ interface DocumentToolbarProps {
   onSave: () => void;
   onOpenLinkEditor: () => void;
   onInsertImage: () => void;
+  onInsertEvidence?: () => void;
+  onInsertProjectData?: () => void;
+  onInsertMitre?: () => void;
+  onInsertGraph?: () => void;
   onOpenExport: () => void;
   exportDisabled: boolean;
   imageDisabled: boolean;
+  reportTitle?: string;
+  outline?: readonly ReportOutlineEntry[];
+  onOpenReportProperties?: () => void;
+  onInsertPageBreak?: () => void;
+  onSelectOutline?: (position: number) => void;
+  previewPaperSize?: "a4" | "letter";
+  onPreviewPaperSizeChange?: (size: "a4" | "letter") => void;
+}
+
+export interface ReportOutlineEntry {
+  level: 1 | 2 | 3;
+  position: number;
+  title: string;
 }
 
 export function DocumentToolbar({
@@ -69,11 +96,30 @@ export function DocumentToolbar({
   onSave,
   onOpenLinkEditor,
   onInsertImage,
+  onInsertEvidence,
+  onInsertProjectData,
+  onInsertMitre,
+  onInsertGraph,
   onOpenExport,
   exportDisabled,
   imageDisabled,
+  reportTitle,
+  outline = [],
+  onOpenReportProperties,
+  onInsertPageBreak,
+  onSelectOutline,
+  previewPaperSize = "a4",
+  onPreviewPaperSizeChange,
 }: DocumentToolbarProps) {
   const [moreFormattingOpen, setMoreFormattingOpen] = useState(false);
+  useEffect(() => {
+    if (!moreFormattingOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMoreFormattingOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [moreFormattingOpen]);
   const state = useEditorState({
     editor,
     selector: ({ editor: currentEditor }) => ({
@@ -141,8 +187,12 @@ export function DocumentToolbar({
   return (
     <Tooltip.Provider delay={350}>
       <div className="editor-toolbar-stack">
-        <div className="editor-toolbar-header">
-          <Toolbar.Root className="editor-toolbar-actions" aria-label="Document actions">
+        <Toolbar.Root
+          className="editor-toolbar-unified"
+          aria-label="Document toolbar"
+          data-more-formatting-open={moreFormattingOpen || undefined}
+        >
+          <Toolbar.Group className="editor-toolbar-actions" aria-label="Document actions">
             <ToolbarButton
               label="Save document"
               wide
@@ -158,23 +208,211 @@ export function DocumentToolbar({
             <ToolbarButton label="Redo" onClick={() => editor.chain().focus().redo().run()}>
               <IconArrowForwardUp size={15} stroke={1.7} aria-hidden="true" />
             </ToolbarButton>
-            <ToolbarButton label="Export document" disabled={exportDisabled} onClick={onOpenExport}>
+            {reportTitle && onOpenReportProperties ? (
+              <ToolbarButton label="Report properties" wide onClick={onOpenReportProperties}>
+                <IconSettings size={15} stroke={1.7} aria-hidden="true" />
+                <span>Properties</span>
+              </ToolbarButton>
+            ) : null}
+            {reportTitle && onInsertPageBreak ? (
+              <Popover.Root>
+                <Popover.Trigger
+                  render={
+                    <Toolbar.Button
+                      className="editor-toolbar-button editor-toolbar-button-wide"
+                      type="button"
+                    />
+                  }
+                  aria-label="Insert report content"
+                >
+                  <IconFileText size={15} stroke={1.7} aria-hidden="true" />
+                  <span>Insert</span>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Positioner align="start" className="z-50" sideOffset={5}>
+                    <Popover.Popup
+                      className="report-outline-popup"
+                      aria-label="Insert report content"
+                    >
+                      {onInsertEvidence ? (
+                        <Popover.Close
+                          render={<Button className="report-outline-entry" type="button" />}
+                          onClick={onInsertEvidence}
+                        >
+                          Evidence
+                        </Popover.Close>
+                      ) : null}
+                      {onInsertProjectData ? (
+                        <Popover.Close
+                          render={<Button className="report-outline-entry" type="button" />}
+                          onClick={onInsertProjectData}
+                        >
+                          Project data
+                        </Popover.Close>
+                      ) : null}
+                      {onInsertMitre ? (
+                        <Popover.Close
+                          render={<Button className="report-outline-entry" type="button" />}
+                          onClick={onInsertMitre}
+                        >
+                          MITRE observations
+                        </Popover.Close>
+                      ) : null}
+                      {onInsertGraph ? (
+                        <Popover.Close
+                          render={<Button className="report-outline-entry" type="button" />}
+                          onClick={onInsertGraph}
+                        >
+                          Graph snapshot
+                        </Popover.Close>
+                      ) : null}
+                      <Popover.Close
+                        render={<Button className="report-outline-entry" type="button" />}
+                        onClick={onInsertImage}
+                      >
+                        Image
+                      </Popover.Close>
+                      <Popover.Close
+                        render={<Button className="report-outline-entry" type="button" />}
+                        onClick={() =>
+                          editor
+                            .chain()
+                            .focus()
+                            .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+                            .run()
+                        }
+                      >
+                        Table
+                      </Popover.Close>
+                      <Popover.Close
+                        render={<Button className="report-outline-entry" type="button" />}
+                        onClick={onInsertPageBreak}
+                      >
+                        Page break <span className="ml-auto text-copy-faint">⌘↵</span>
+                      </Popover.Close>
+                    </Popover.Popup>
+                  </Popover.Positioner>
+                </Popover.Portal>
+              </Popover.Root>
+            ) : null}
+            {reportTitle ? (
+              <Popover.Root>
+                <Popover.Trigger
+                  render={
+                    <Toolbar.Button
+                      className="editor-toolbar-button editor-toolbar-button-wide"
+                      type="button"
+                    />
+                  }
+                  aria-label="Report outline"
+                >
+                  <IconListTree size={15} stroke={1.7} aria-hidden="true" />
+                  <span>Outline</span>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Positioner align="end" className="z-50" sideOffset={5}>
+                    <Popover.Popup className="report-outline-popup" aria-label="Report outline">
+                      <Popover.Title className="report-outline-title">
+                        Document outline
+                      </Popover.Title>
+                      {outline.length === 0 ? (
+                        <p className="report-outline-empty">
+                          Add H1–H3 headings to build the outline and PDF contents.
+                        </p>
+                      ) : (
+                        outline.map((entry) => (
+                          <Popover.Close
+                            key={`${entry.position}:${entry.title}`}
+                            render={<Button className="report-outline-entry" type="button" />}
+                            data-level={entry.level}
+                            onClick={() => onSelectOutline?.(entry.position)}
+                          >
+                            {entry.title}
+                          </Popover.Close>
+                        ))
+                      )}
+                    </Popover.Popup>
+                  </Popover.Positioner>
+                </Popover.Portal>
+              </Popover.Root>
+            ) : null}
+            {reportTitle && onPreviewPaperSizeChange ? (
+              <Popover.Root>
+                <Popover.Trigger
+                  render={
+                    <Toolbar.Button
+                      className="editor-toolbar-button editor-toolbar-button-wide"
+                      type="button"
+                    />
+                  }
+                  aria-label="Page preview size"
+                >
+                  <span>Page · {previewPaperSize.toUpperCase()}</span>
+                </Popover.Trigger>
+                <Popover.Portal>
+                  <Popover.Positioner align="end" className="z-50" sideOffset={5}>
+                    <Popover.Popup className="report-outline-popup" aria-label="Page preview size">
+                      {(["a4", "letter"] as const).map((size) => (
+                        <Popover.Close
+                          key={size}
+                          render={<Button className="report-outline-entry" type="button" />}
+                          aria-current={previewPaperSize === size ? "true" : undefined}
+                          onClick={() => onPreviewPaperSizeChange(size)}
+                        >
+                          {size === "a4" ? "A4 · 210 × 297 mm" : "Letter · 8.5 × 11 in"}
+                        </Popover.Close>
+                      ))}
+                    </Popover.Popup>
+                  </Popover.Positioner>
+                </Popover.Portal>
+              </Popover.Root>
+            ) : null}
+            <ToolbarButton
+              label={reportTitle ? "Publish report" : "Export document"}
+              wide={Boolean(reportTitle)}
+              disabled={exportDisabled}
+              onClick={onOpenExport}
+            >
               <IconFileExport size={15} stroke={1.7} aria-hidden="true" />
+              {reportTitle ? <span>Publish</span> : null}
             </ToolbarButton>
-          </Toolbar.Root>
+          </Toolbar.Group>
           <span className="editor-save-state" aria-live="polite">
             {saveState === "saved" ? `Saved · r${savedRevision}` : null}
             {saveState === "pending" ? "Unsaved" : null}
             {saveState === "saving" ? "Saving…" : null}
             {saveState === "error" ? "Not saved" : null}
           </span>
-        </div>
-        <Collapsible.Root
-          className="editor-toolbar-more"
-          open={moreFormattingOpen}
-          onOpenChange={setMoreFormattingOpen}
-        >
-          <Toolbar.Root className="editor-toolbar-formatting" aria-label="Document formatting">
+          <Toolbar.Group className="editor-toolbar-formatting" aria-label="Document formatting">
+            {reportTitle ? (
+              <Toolbar.Group className="editor-toolbar-group" aria-label="Typography formatting">
+                <FormattingPopover
+                  label="Font family"
+                  value="Font"
+                  options={REPORT_FONT_FAMILIES.map((font) => ({
+                    value: font,
+                    label:
+                      font === "geist"
+                        ? "Geist"
+                        : font === "source_serif_4"
+                          ? "Source Serif 4"
+                          : "Geist Mono",
+                  }))}
+                  onSelect={(fontFamily) =>
+                    editor.chain().focus().setMark("textStyle", { fontFamily }).run()
+                  }
+                />
+                <FormattingPopover
+                  label="Font size"
+                  value="Size"
+                  options={REPORT_FONT_SIZES.map((size) => ({ value: size, label: `${size} pt` }))}
+                  onSelect={(fontSize) =>
+                    editor.chain().focus().setMark("textStyle", { fontSize }).run()
+                  }
+                />
+              </Toolbar.Group>
+            ) : null}
+            {reportTitle ? <ToolbarSeparator /> : null}
             <ToggleGroup
               className="editor-toolbar-group"
               aria-label="Text style"
@@ -234,55 +472,87 @@ export function DocumentToolbar({
               </ToolbarButton>
             </Toolbar.Group>
             <ToolbarSeparator />
-            <Toolbar.Group className="editor-toolbar-group" aria-label="Document content">
+            <span className="editor-toolbar-more-trigger">
               <ToolbarButton
-                label="Add or edit link"
-                active={state.link}
-                disabled={state.selectionEmpty && !state.link}
-                onClick={onOpenLinkEditor}
+                label="More formatting"
+                active={moreFormattingOpen}
+                expanded={moreFormattingOpen}
+                controls="editor-additional-formatting"
+                onClick={() => setMoreFormattingOpen((open) => !open)}
               >
-                <IconLink size={15} stroke={1.7} aria-hidden="true" />
+                <IconDots size={16} stroke={1.8} aria-hidden="true" />
               </ToolbarButton>
-              <ToolbarButton label="Attach image" disabled={imageDisabled} onClick={onInsertImage}>
-                <IconPhotoPlus size={15} stroke={1.7} aria-hidden="true" />
-              </ToolbarButton>
-            </Toolbar.Group>
-            <ToolbarSeparator />
-            <ToolbarButton
-              label="Defang selection"
-              disabled={state.selectionEmpty}
-              onClick={handleDefang}
+            </span>
+            <Toolbar.Group
+              id="editor-additional-formatting"
+              className="editor-toolbar-overflow-priority"
+              aria-label="Additional formatting controls"
             >
-              <IconShieldCheck size={15} stroke={1.7} aria-hidden="true" />
-            </ToolbarButton>
-            <ToolbarSeparator />
-            <Tooltip.Root>
-              <Tooltip.Trigger
-                render={
-                  <Collapsible.Trigger
-                    render={<Toolbar.Button className="editor-toolbar-button" type="button" />}
-                    aria-label={
-                      moreFormattingOpen ? "Hide more formatting" : "Show more formatting"
+              {reportTitle ? (
+                <Toolbar.Group className="editor-toolbar-group" aria-label="Detailed typography">
+                  <FormattingPopover
+                    label="Text color"
+                    value="Color"
+                    options={REPORT_TEXT_COLORS.map((color, index) => ({
+                      value: color,
+                      label: ["Charcoal", "Black", "Blue", "Red", "Green"][index] ?? "Color",
+                      swatch: color,
+                    }))}
+                    onSelect={(color) =>
+                      editor.chain().focus().setMark("textStyle", { color }).run()
                     }
                   />
-                }
+                  <FormattingPopover
+                    label="Line spacing"
+                    value="Line"
+                    options={REPORT_LINE_SPACING.map((spacing) => ({
+                      value: spacing,
+                      label: `${spacing}×`,
+                    }))}
+                    onSelect={(lineSpacing) => updateActiveTextBlock(editor, { lineSpacing })}
+                  />
+                  <FormattingPopover
+                    label="Paragraph spacing"
+                    value="After"
+                    options={REPORT_PARAGRAPH_SPACING.map((spacing) => ({
+                      value: spacing,
+                      label: `${spacing} pt after`,
+                    }))}
+                    onSelect={(paragraphSpacing) =>
+                      updateActiveTextBlock(editor, { paragraphSpacing })
+                    }
+                  />
+                </Toolbar.Group>
+              ) : null}
+              <ToolbarSeparator />
+              <Toolbar.Group className="editor-toolbar-group" aria-label="Document content">
+                <ToolbarButton
+                  label="Add or edit link"
+                  active={state.link}
+                  disabled={state.selectionEmpty && !state.link}
+                  onClick={onOpenLinkEditor}
+                >
+                  <IconLink size={15} stroke={1.7} aria-hidden="true" />
+                </ToolbarButton>
+                {!reportTitle ? (
+                  <ToolbarButton
+                    label="Attach image"
+                    disabled={imageDisabled}
+                    onClick={onInsertImage}
+                  >
+                    <IconPhotoPlus size={15} stroke={1.7} aria-hidden="true" />
+                  </ToolbarButton>
+                ) : null}
+              </Toolbar.Group>
+              <ToolbarSeparator />
+              <ToolbarButton
+                label="Defang selection"
+                disabled={state.selectionEmpty}
+                onClick={handleDefang}
               >
-                {moreFormattingOpen ? (
-                  <IconChevronUp size={15} stroke={1.7} aria-hidden="true" />
-                ) : (
-                  <IconChevronDown size={15} stroke={1.7} aria-hidden="true" />
-                )}
-              </Tooltip.Trigger>
-              <ToolbarTooltipPopup
-                label={moreFormattingOpen ? "Hide more formatting" : "Show more formatting"}
-              />
-            </Tooltip.Root>
-          </Toolbar.Root>
-          <Collapsible.Panel>
-            <Toolbar.Root
-              className="editor-toolbar-formatting editor-toolbar-formatting-more"
-              aria-label="Additional formatting"
-            >
+                <IconShieldCheck size={15} stroke={1.7} aria-hidden="true" />
+              </ToolbarButton>
+              <ToolbarSeparator />
               <Toolbar.Group
                 className="editor-toolbar-group"
                 aria-label="Additional inline formatting"
@@ -411,79 +681,108 @@ export function DocumentToolbar({
                 >
                   <IconInfoSquareRounded size={15} stroke={1.7} aria-hidden="true" />
                 </ToolbarButton>
+                {!reportTitle ? (
+                  <ToolbarButton
+                    label="Insert table"
+                    disabled={state.table}
+                    onClick={() =>
+                      editor
+                        .chain()
+                        .focus()
+                        .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
+                        .run()
+                    }
+                  >
+                    <IconTable size={15} stroke={1.7} aria-hidden="true" />
+                  </ToolbarButton>
+                ) : null}
+              </Toolbar.Group>
+            </Toolbar.Group>
+          </Toolbar.Group>
+          {state.table ? (
+            <Toolbar.Group className="editor-table-toolbar" aria-label="Table editing">
+              <span className="editor-table-toolbar-label">Table</span>
+              <Toolbar.Group className="editor-toolbar-group" aria-label="Table rows">
                 <ToolbarButton
-                  label="Insert table"
-                  disabled={state.table}
-                  onClick={() =>
-                    editor
-                      .chain()
-                      .focus()
-                      .insertTable({ rows: 3, cols: 3, withHeaderRow: true })
-                      .run()
-                  }
+                  label="Add row above"
+                  onClick={() => editor.chain().focus().addRowBefore().run()}
                 >
-                  <IconTable size={15} stroke={1.7} aria-hidden="true" />
+                  <IconRowInsertTop size={15} stroke={1.7} aria-hidden="true" />
+                </ToolbarButton>
+                <ToolbarButton
+                  label="Add row below"
+                  onClick={() => editor.chain().focus().addRowAfter().run()}
+                >
+                  <IconRowInsertBottom size={15} stroke={1.7} aria-hidden="true" />
+                </ToolbarButton>
+                <ToolbarButton
+                  label="Delete row"
+                  danger
+                  onClick={() => editor.chain().focus().deleteRow().run()}
+                >
+                  <IconRowRemove size={15} stroke={1.7} aria-hidden="true" />
                 </ToolbarButton>
               </Toolbar.Group>
-            </Toolbar.Root>
-          </Collapsible.Panel>
-        </Collapsible.Root>
-        {state.table ? (
-          <Toolbar.Root className="editor-table-toolbar" aria-label="Table editing">
-            <span className="editor-table-toolbar-label">Table</span>
-            <Toolbar.Group className="editor-toolbar-group" aria-label="Table rows">
+              <ToolbarSeparator />
+              <Toolbar.Group className="editor-toolbar-group" aria-label="Table columns">
+                <ToolbarButton
+                  label="Add column before"
+                  onClick={() => editor.chain().focus().addColumnBefore().run()}
+                >
+                  <IconColumnInsertLeft size={15} stroke={1.7} aria-hidden="true" />
+                </ToolbarButton>
+                <ToolbarButton
+                  label="Add column after"
+                  onClick={() => editor.chain().focus().addColumnAfter().run()}
+                >
+                  <IconColumnInsertRight size={15} stroke={1.7} aria-hidden="true" />
+                </ToolbarButton>
+                <ToolbarButton
+                  label="Delete column"
+                  danger
+                  onClick={() => editor.chain().focus().deleteColumn().run()}
+                >
+                  <IconColumnRemove size={15} stroke={1.7} aria-hidden="true" />
+                </ToolbarButton>
+              </Toolbar.Group>
+              <ToolbarSeparator />
               <ToolbarButton
-                label="Add row above"
-                onClick={() => editor.chain().focus().addRowBefore().run()}
-              >
-                <IconRowInsertTop size={15} stroke={1.7} aria-hidden="true" />
-              </ToolbarButton>
-              <ToolbarButton
-                label="Add row below"
-                onClick={() => editor.chain().focus().addRowAfter().run()}
-              >
-                <IconRowInsertBottom size={15} stroke={1.7} aria-hidden="true" />
-              </ToolbarButton>
-              <ToolbarButton
-                label="Delete row"
+                label="Delete table"
                 danger
-                onClick={() => editor.chain().focus().deleteRow().run()}
+                onClick={() => editor.chain().focus().deleteTable().run()}
               >
-                <IconRowRemove size={15} stroke={1.7} aria-hidden="true" />
+                <IconTableOff size={15} stroke={1.7} aria-hidden="true" />
               </ToolbarButton>
+              {reportTitle ? (
+                <>
+                  <ToolbarSeparator />
+                  <ToolbarButton
+                    label="Fit table to page"
+                    wide
+                    onClick={() =>
+                      editor.chain().focus().updateAttributes("table", { layout: "fit-page" }).run()
+                    }
+                  >
+                    <span>Fit page</span>
+                  </ToolbarButton>
+                  <ToolbarButton
+                    label="Place table on a landscape page"
+                    wide
+                    onClick={() =>
+                      editor
+                        .chain()
+                        .focus()
+                        .updateAttributes("table", { layout: "landscape-page" })
+                        .run()
+                    }
+                  >
+                    <span>Landscape page</span>
+                  </ToolbarButton>
+                </>
+              ) : null}
             </Toolbar.Group>
-            <ToolbarSeparator />
-            <Toolbar.Group className="editor-toolbar-group" aria-label="Table columns">
-              <ToolbarButton
-                label="Add column before"
-                onClick={() => editor.chain().focus().addColumnBefore().run()}
-              >
-                <IconColumnInsertLeft size={15} stroke={1.7} aria-hidden="true" />
-              </ToolbarButton>
-              <ToolbarButton
-                label="Add column after"
-                onClick={() => editor.chain().focus().addColumnAfter().run()}
-              >
-                <IconColumnInsertRight size={15} stroke={1.7} aria-hidden="true" />
-              </ToolbarButton>
-              <ToolbarButton
-                label="Delete column"
-                danger
-                onClick={() => editor.chain().focus().deleteColumn().run()}
-              >
-                <IconColumnRemove size={15} stroke={1.7} aria-hidden="true" />
-              </ToolbarButton>
-            </Toolbar.Group>
-            <ToolbarSeparator />
-            <ToolbarButton
-              label="Delete table"
-              danger
-              onClick={() => editor.chain().focus().deleteTable().run()}
-            >
-              <IconTableOff size={15} stroke={1.7} aria-hidden="true" />
-            </ToolbarButton>
-          </Toolbar.Root>
-        ) : null}
+          ) : null}
+        </Toolbar.Root>
       </div>
     </Tooltip.Provider>
   );
@@ -496,6 +795,8 @@ interface ToolbarButtonProps {
   disabled?: boolean;
   danger?: boolean;
   wide?: boolean;
+  expanded?: boolean;
+  controls?: string;
   onClick?: () => void;
   children: ReactNode;
 }
@@ -507,6 +808,8 @@ function ToolbarButton({
   disabled = false,
   danger = false,
   wide = false,
+  expanded,
+  controls,
   onClick,
   children,
 }: ToolbarButtonProps) {
@@ -515,6 +818,8 @@ function ToolbarButton({
     type: "button" as const,
     "aria-label": label,
     "data-danger": danger || undefined,
+    "aria-expanded": expanded,
+    "aria-controls": controls,
     disabled,
   };
 
@@ -576,4 +881,65 @@ function ToolbarTooltipPopup({ label }: { label: string }) {
 
 function ToolbarSeparator() {
   return <Toolbar.Separator className="editor-toolbar-separator" />;
+}
+
+interface FormattingOption<T extends string | number> {
+  value: T;
+  label: string;
+  swatch?: string;
+}
+
+function FormattingPopover<T extends string | number>({
+  label,
+  value,
+  options,
+  onSelect,
+}: {
+  label: string;
+  value: string;
+  options: readonly FormattingOption<T>[];
+  onSelect: (value: T) => void;
+}) {
+  return (
+    <Popover.Root>
+      <Popover.Trigger
+        render={
+          <Toolbar.Button
+            className="editor-toolbar-button editor-toolbar-button-wide"
+            type="button"
+          />
+        }
+        aria-label={label}
+      >
+        {value}
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner className="z-50" align="start" sideOffset={5}>
+          <Popover.Popup className="report-outline-popup" aria-label={label}>
+            {options.map((option) => (
+              <Popover.Close
+                key={String(option.value)}
+                render={<Button className="report-outline-entry" type="button" />}
+                onClick={() => onSelect(option.value)}
+              >
+                {option.swatch ? (
+                  <span
+                    className="editor-color-swatch"
+                    style={{ backgroundColor: option.swatch }}
+                    aria-hidden="true"
+                  />
+                ) : null}
+                {option.label}
+              </Popover.Close>
+            ))}
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+function updateActiveTextBlock(editor: Editor, attributes: Record<string, number>) {
+  const node = editor.isActive("heading") ? "heading" : "paragraph";
+  editor.chain().focus().updateAttributes(node, attributes).run();
 }

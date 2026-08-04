@@ -1,11 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import { listReportProjectData } from "../lib/guided-reports";
+import { listReportProjectData } from "../lib/report-data";
 import { ProjectDataPicker } from "./ProjectDataPicker";
 
-vi.mock("../lib/guided-reports", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../lib/guided-reports")>()),
+vi.mock("../lib/report-data", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/report-data")>()),
   listReportProjectData: vi.fn(),
 }));
 

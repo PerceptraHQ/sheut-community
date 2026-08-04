@@ -28,6 +28,7 @@ interface PublicationDialogProps {
   busy: boolean;
   defaultTlpMarking: TlpMarking;
   initialFileName: string;
+  initialPaperSize?: PublicationPaperSize;
   onOpenChange: (open: boolean) => void;
   onPublish: (options: DocumentPublicationOptions) => Promise<void>;
   open: boolean;
@@ -60,6 +61,7 @@ export function PublicationDialog({
   busy,
   defaultTlpMarking,
   initialFileName,
+  initialPaperSize = "a4",
   onOpenChange,
   onPublish,
   open,
@@ -70,8 +72,8 @@ export function PublicationDialog({
   title = "Publish report",
 }: PublicationDialogProps) {
   const notices = useVaultNotices();
-  const [format, setFormat] = useState<DocumentExportFormat>("html");
-  const [paperSize, setPaperSize] = useState<PublicationPaperSize>("a4");
+  const format: DocumentExportFormat = "pdf";
+  const [paperSize, setPaperSize] = useState<PublicationPaperSize>(initialPaperSize);
   const [orientation, setOrientation] = useState<PublicationOrientation>("portrait");
   const [tlpMarking, setTlpMarking] = useState<TlpMarking>(defaultTlpMarking);
   const [fileName, setFileName] = useState(initialFileName);
@@ -320,21 +322,11 @@ export function PublicationDialog({
           </section>
           <div className="grid gap-1.5">
             <span className="font-medium text-copy-secondary text-xs">Format</span>
-            <ToggleGroup
-              className="export-format-group"
-              aria-label="Export format"
-              value={[format]}
-              onValueChange={(value) => {
-                const next = value[0];
-                if (next === "html" || next === "pdf" || next === "docx") setFormat(next);
-              }}
-            >
-              {(["html", "pdf", "docx"] as const).map((value) => (
-                <Toggle className="export-format-option" value={value} disabled={busy} key={value}>
-                  {value.toUpperCase()}
-                </Toggle>
-              ))}
-            </ToggleGroup>
+            <div className="export-format-group">
+              <span className="export-format-option" aria-current="true">
+                PDF
+              </span>
+            </div>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <SelectField
@@ -620,7 +612,5 @@ function normalizeReleaseVersion(value: string): string | null {
 }
 
 function publicationSourceId(record: PublicationRecord): string {
-  return record.snapshot.source.type === "freeform_document"
-    ? record.snapshot.source.document_id
-    : record.snapshot.source.report_id;
+  return record.snapshot.source.document_id;
 }

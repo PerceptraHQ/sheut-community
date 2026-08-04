@@ -28,7 +28,6 @@ keyring = { version = "=4.1.5", default-features = false, features = ["v1"] }
 typst-as-lib = "=0.16.0"
 typst = "=0.15.1"
 typst-pdf = "=0.15.1"
-docx-rs = "=0.4.22"
 rfd = "=0.17.2"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 base64 = "=0.22.1"

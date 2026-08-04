@@ -1,6 +1,6 @@
 import { Node } from "@tiptap/core";
 import { loadDocumentImage } from "./documents";
-import { loadEvidenceImage } from "./guided-reports";
+import { loadEvidenceImage } from "./evidence";
 
 export function createImageAttachmentExtension(projectId: string, documentId: string) {
   return createEncryptedImageExtension(
