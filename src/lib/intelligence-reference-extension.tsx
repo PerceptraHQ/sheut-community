@@ -87,7 +87,11 @@ const ProjectReferenceView = (props: NodeViewProps) => {
 const GraphSnapshotView = (props: NodeViewProps) => {
   const attributes = props.node.attrs as GraphSnapshotAttributes;
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [imageError, setImageError] = useState<{
+    attachmentId: string;
+    message: string;
+  } | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [loadedImage, setLoadedImage] = useState<{
     attachmentId: string;
     source: string;
@@ -101,10 +105,16 @@ const GraphSnapshotView = (props: NodeViewProps) => {
       .then((bytes) => {
         if (!active) return;
         objectUrl = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+        setImageError(null);
         setLoadedImage({ attachmentId: attributes.attachmentId, source: objectUrl });
       })
       .catch(() => {
-        if (active) setError("Frozen graph image is unavailable.");
+        if (active) {
+          setImageError({
+            attachmentId: attributes.attachmentId,
+            message: "Frozen graph image is unavailable.",
+          });
+        }
       });
     return () => {
       active = false;
@@ -113,11 +123,11 @@ const GraphSnapshotView = (props: NodeViewProps) => {
   }, [attributes.attachmentId, options]);
   const refresh = async () => {
     setBusy(true);
-    setError(null);
+    setRefreshError(null);
     try {
       props.updateAttributes(await options.onRefreshGraph(attributes));
     } catch {
-      setError("Graph workspace is unavailable; the frozen snapshot was retained.");
+      setRefreshError("Graph workspace is unavailable; the frozen snapshot was retained.");
     } finally {
       setBusy(false);
     }
@@ -149,9 +159,14 @@ const GraphSnapshotView = (props: NodeViewProps) => {
         </p>
       )}
       <figcaption contentEditable={false}>{attributes.title}</figcaption>
-      {error ? (
+      {imageError?.attachmentId === attributes.attachmentId ? (
         <p className="editor-reference-error" role="status" contentEditable={false}>
-          {error}
+          {imageError.message}
+        </p>
+      ) : null}
+      {refreshError ? (
+        <p className="editor-reference-error" role="status" contentEditable={false}>
+          {refreshError}
         </p>
       ) : null}
     </NodeViewWrapper>
