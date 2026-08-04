@@ -44,7 +44,7 @@ export function ReportHelpGuides({ initialTopic }: ReportHelpGuidesProps) {
         Typst produces the only publication format: PDF. It creates the branded cover, report
         administration, optional release history, nested table of contents, running furniture, page
         numbers, body, analytical figures, and evidence appendix. TLP appears on the cover and the
-        running page furniture; criticality is not published.
+        running page furniture.
       </p>
     </article>
   );

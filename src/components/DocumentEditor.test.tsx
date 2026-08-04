@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WORKSPACE_ACTION_EVENT } from "../lib/desktopActions";
 import type { DocumentEnvelope } from "../lib/documents";
 import * as documentsApi from "../lib/documents";
+import * as graphApi from "../lib/graph";
 import DocumentEditor, { AUTOSAVE_INTERVAL_MS } from "./DocumentEditor";
 import type { VaultPromiseNoticeOptions } from "./VaultNotices";
 
@@ -21,8 +22,10 @@ const editorCommandSpies = vi.hoisted(() => ({
   deleteColumn: vi.fn(),
   deleteRow: vi.fn(),
   deleteTable: vi.fn(),
+  focus: vi.fn(),
   insertContent: vi.fn(),
   insertTable: vi.fn(),
+  setTextSelection: vi.fn(),
   setTextAlign: vi.fn(),
   unsetLink: vi.fn(),
 }));
@@ -48,7 +51,10 @@ vi.mock("@tiptap/react", async () => {
   let onUpdate: ((event: { editor: typeof editor }) => void) | undefined;
   const selectionListeners = new Set<() => void>();
   const chain = {
-    focus: () => chain,
+    focus: () => {
+      editorCommandSpies.focus();
+      return chain;
+    },
     toggleHeading: () => chain,
     toggleBold: () => chain,
     toggleItalic: () => chain,
@@ -97,6 +103,10 @@ vi.mock("@tiptap/react", async () => {
     },
     insertContent: (content: unknown) => {
       editorCommandSpies.insertContent(content);
+      return chain;
+    },
+    setTextSelection: (position: number) => {
+      editorCommandSpies.setTextSelection(position);
       return chain;
     },
     extendMarkRange: () => chain,
@@ -194,6 +204,12 @@ vi.mock("../lib/brand-profiles", async (importOriginal) => ({
   listBrandProfiles: vi.fn().mockResolvedValue([]),
 }));
 
+vi.mock("../lib/graph", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/graph")>()),
+  createGraphSnapshotAttachment: vi.fn(),
+  listGraphWorkspaces: vi.fn(),
+}));
+
 vi.mock("./VaultNotices", () => ({
   useVaultNotices: () => noticeSpies,
 }));
@@ -236,6 +252,8 @@ describe("DocumentEditor", () => {
     vi.mocked(documentsApi.saveDocument).mockReset();
     vi.mocked(documentsApi.pickDocumentImage).mockReset();
     vi.mocked(documentsApi.renderSavedDocument).mockReset();
+    vi.mocked(graphApi.createGraphSnapshotAttachment).mockReset();
+    vi.mocked(graphApi.listGraphWorkspaces).mockReset().mockResolvedValue([]);
     noticeSpies.add.mockReset();
     noticeSpies.promise.mockClear();
   });
@@ -338,6 +356,97 @@ describe("DocumentEditor", () => {
     }
   });
 
+  it("cancels an insertion without changing the document and restores the caret", async () => {
+    const user = userEvent.setup();
+    editorState.selection = { from: 7, to: 7, empty: true };
+    render(
+      <DocumentEditor
+        projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+        document={reportDocument}
+        onSaved={vi.fn()}
+        onReload={vi.fn()}
+        onBusyChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Insert report content" }));
+    const insertMenu = await screen.findByRole("dialog", { name: "Insert report content" });
+    await user.click(within(insertMenu).getByText("Evidence"));
+    expect(await screen.findByRole("dialog", { name: "Insert Evidence" })).toBeVisible();
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Insert Evidence" })).not.toBeInTheDocument(),
+    );
+    expect(editorCommandSpies.insertContent).not.toHaveBeenCalled();
+    expect(editorCommandSpies.setTextSelection).toHaveBeenLastCalledWith(7);
+    expect(editorCommandSpies.focus).toHaveBeenCalled();
+  });
+
+  it("does not insert a graph if the dialog is cancelled while rendering", async () => {
+    const user = userEvent.setup();
+    let resolveSnapshot: ((snapshot: graphApi.GraphSnapshotAttachment) => void) | undefined;
+    vi.mocked(graphApi.listGraphWorkspaces).mockResolvedValue([
+      {
+        schema_version: 1,
+        id: "4f3d8e34-7c64-4d41-8b68-d7a334e1a884",
+        name: "Infrastructure map",
+        revision: 7,
+        mode: "view",
+        viewport: { x: 0, y: 0, zoom: 1 },
+        created_at_unix_ms: 1,
+        updated_at_unix_ms: 2,
+        deleted_at_unix_ms: null,
+      },
+    ]);
+    vi.mocked(graphApi.createGraphSnapshotAttachment).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSnapshot = resolve;
+        }),
+    );
+    render(
+      <DocumentEditor
+        projectId="019b0dc2-34c8-7c31-a2e5-c447222ce0b9"
+        document={reportDocument}
+        onSaved={vi.fn()}
+        onReload={vi.fn()}
+        onBusyChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Insert report content" }));
+    const insertMenu = await screen.findByRole("dialog", { name: "Insert report content" });
+    await user.click(within(insertMenu).getByText("Graph snapshot"));
+    await user.click(await screen.findByRole("option", { name: /Infrastructure map/ }));
+    await user.click(screen.getByRole("button", { name: "Insert inline" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Insert graph snapshot" }),
+      ).not.toBeInTheDocument(),
+    );
+
+    await act(async () => {
+      resolveSnapshot?.({
+        attachment: {
+          id: "22a415a0-61b2-4b50-904d-d5f180bfc505",
+          documentId: reportDocument.id,
+          mediaType: "image/png",
+          fileName: "graph.png",
+          byteLen: 64,
+        },
+        workspaceId: "4f3d8e34-7c64-4d41-8b68-d7a334e1a884",
+        workspaceRevision: 7,
+        workspaceName: "Infrastructure map",
+      });
+      await Promise.resolve();
+    });
+
+    expect(editorCommandSpies.insertContent).not.toHaveBeenCalled();
+  });
+
   it("uses the available workspace width instead of constraining the editor chrome", () => {
     const { container } = render(
       <DocumentEditor
@@ -375,7 +484,7 @@ describe("DocumentEditor", () => {
     expect(fileName).toHaveValue("Original");
     expect(screen.getByText("PDF")).toBeVisible();
     await user.click(screen.getByRole("combobox", { name: "Paper size" }));
-    await user.click(screen.getByRole("option", { name: "Letter US Letter" }));
+    await user.click(await screen.findByRole("option", { name: "Letter US Letter" }));
     await user.click(screen.getByRole("combobox", { name: "Orientation" }));
     await user.click(screen.getByRole("option", { name: "Landscape Wide pages" }));
     await user.click(screen.getByRole("combobox", { name: "TLP marking" }));

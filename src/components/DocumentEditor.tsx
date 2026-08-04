@@ -86,6 +86,7 @@ export default function DocumentEditor({
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const insertionPosition = useRef(1);
   const insertionCommitted = useRef(false);
+  const graphInsertionGeneration = useRef(0);
   const persistPendingRef = useRef<(reportFailure?: boolean) => Promise<void>>(async () => {});
   const [saveState, setSaveState] = useState<"saved" | "pending" | "saving" | "error">("saved");
   const [error, setError] = useState<string | null>(null);
@@ -516,17 +517,20 @@ export default function DocumentEditor({
   };
 
   const handleInsertGraph = async (workspace: GraphWorkspace, placement: "inline" | "appendix") => {
+    const generation = graphInsertionGeneration.current;
+    const position = insertionPosition.current;
     const frozen = await createGraphSnapshotAttachment(
       projectId,
       document.id,
       workspace.id,
       workspace.revision,
     );
+    if (generation !== graphInsertionGeneration.current) return;
     insertionCommitted.current = true;
     editor
       .chain()
       .focus()
-      .setTextSelection(insertionPosition.current)
+      .setTextSelection(position)
       .insertContent({ type: "graphSnapshot", attrs: graphSnapshotAttributes(frozen, placement) })
       .run();
     setGraphPickerOpen(false);
@@ -551,6 +555,7 @@ export default function DocumentEditor({
             ? () => {
                 insertionPosition.current = editor.state.selection.from;
                 insertionCommitted.current = false;
+                graphInsertionGeneration.current += 1;
                 setGraphPickerOpen(true);
               }
             : undefined
@@ -619,7 +624,10 @@ export default function DocumentEditor({
           projectId={projectId}
           onOpenChange={(open) => {
             setGraphPickerOpen(open);
-            if (!open) restoreInsertionFocus();
+            if (!open) {
+              if (!insertionCommitted.current) graphInsertionGeneration.current += 1;
+              restoreInsertionFocus();
+            }
           }}
           onInsert={handleInsertGraph}
         />

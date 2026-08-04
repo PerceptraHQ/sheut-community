@@ -9,7 +9,7 @@ use std::{
 };
 
 use sheut_core::{
-    AnalyticConfidence, DocumentActivityKind, DocumentKind, DocumentTextDiffKind,
+    AnalyticConfidence, DocumentActivityKind, DocumentEnvelope, DocumentKind, DocumentTextDiffKind,
     EvidenceMetadataInput, GraphViewport, LocalId, MitreCatalog, MitreTechniqueReference, Position,
     ReportProperties, Revision, SemanticRelationshipDraft, TechniqueAssessment, TechniqueOutcome,
     TlpMarking, WorkspaceItemKind, WorkspaceMode,
@@ -23,6 +23,7 @@ use sheut_stix::{
     StixDraft, commit_import, commit_project_export, parse_bundle, preview_import,
     preview_project_export,
 };
+use sheut_store::EncryptedStore;
 
 const TEST_PNG: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
@@ -1441,6 +1442,56 @@ fn reports_are_blank_numbered_documents_and_deleted_numbers_are_not_reused() {
             .list_documents(project.id(), 1_775_347_200_003)
             .unwrap(),
         vec![second]
+    );
+}
+
+#[test]
+fn legacy_freeform_reports_are_promoted_without_losing_their_body() {
+    let directory = TestDirectory::new();
+    let keys = FakeKeyStore::default();
+    let mut manager = ProjectManager::new(directory.0.clone(), keys.clone()).unwrap();
+    let project = manager.create_project("Legacy report", 1_000).unwrap();
+    let legacy_id = LocalId::parse("e7c44850-9f67-4d26-b7e3-0d4ee82339ef").unwrap();
+    let legacy_body = serde_json::json!({
+        "type": "doc",
+        "content": [{
+            "type": "paragraph",
+            "content": [{"type": "text", "text": "Preserved historical analysis"}]
+        }]
+    });
+    manager.lock_project(project.id()).unwrap();
+
+    let database_path = directory
+        .0
+        .join(project.id().to_string())
+        .join("project.sheut");
+    let mut store = EncryptedStore::open(&database_path, &keys.key_for(project.id())).unwrap();
+    let legacy = DocumentEnvelope::new(
+        legacy_id,
+        DocumentKind::Report,
+        Revision::new(1).unwrap(),
+        legacy_body.clone(),
+    )
+    .unwrap();
+    store.save_document_at(&legacy, None, 1_100).unwrap();
+    drop(store);
+
+    manager.unlock_project(project.id(), 1_200).unwrap();
+    let promoted = manager
+        .load_document(project.id(), legacy_id, 1_300)
+        .unwrap();
+    assert_eq!(promoted.revision(), Revision::new(2).unwrap());
+    assert_eq!(promoted.root(), &legacy_body);
+    assert_eq!(
+        promoted.report_properties().unwrap().report_id(),
+        "RPT-0001"
+    );
+    assert_eq!(
+        manager
+            .list_document_revisions(project.id(), legacy_id, 1_400)
+            .unwrap()
+            .len(),
+        2
     );
 }
 

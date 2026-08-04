@@ -55,6 +55,7 @@ describe("fluid application shell", () => {
   });
 
   it("shows report pages at bounded A4 and Letter dimensions", () => {
+    expect(appCss).toMatch(/\.editor-toolbar-unified\s*\{[^}]*height:\s*3\.25rem;/su);
     expect(appCss).toMatch(/\.control-input\s*\{[^}]*width:\s*100%;/su);
     expect(appCss).toMatch(
       /\.report-page-surface\s*\{[^}]*width:\s*min\(calc\(100% - 3rem\), 210mm\);[^}]*min-height:\s*297mm;/su,

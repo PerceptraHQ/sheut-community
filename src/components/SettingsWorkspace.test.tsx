@@ -110,6 +110,7 @@ describe("SettingsWorkspace", () => {
 
     expect(screen.getByRole("heading", { name: "Document-native reports" })).toBeVisible();
     expect(screen.getByText(/Reports are blank, revisioned documents/i)).toBeVisible();
+    expect(screen.queryByText(/criticality/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Typst produces the only publication format: PDF/i)).toBeVisible();
   });
 });

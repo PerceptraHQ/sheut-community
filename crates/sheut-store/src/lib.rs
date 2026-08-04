@@ -2388,6 +2388,22 @@ mod tests {
                 r#"
                 INSERT INTO documents (id, revision, payload)
                     VALUES ('document', 1, x'7b7d');
+                INSERT INTO document_revisions (
+                    document_id, revision, saved_at_unix_ms, payload
+                ) VALUES ('document', 1, 1, x'7b7d');
+                INSERT INTO document_activity (
+                    document_id, kind, revision, source_revision, occurred_at_unix_ms
+                ) VALUES ('document', 'created', 1, NULL, 1);
+                INSERT INTO document_image_attachments (
+                    id, document_id, media_type, file_name, byte_len, payload
+                ) VALUES ('attachment', 'document', 'image/png', 'figure.png', 1, x'00');
+                INSERT INTO project_metadata (singleton, payload) VALUES (1, x'7b7d');
+                INSERT INTO stix_objects (
+                    local_id, stix_id, object_type, modified, version_key, payload
+                ) VALUES ('object', 'indicator--fixture', 'indicator', NULL, 'fixture', x'7b7d');
+                INSERT INTO stix_drafts (
+                    local_id, object_type, properties, semantic_relationship, replaces_stix_id
+                ) VALUES ('draft', 'indicator', x'7b7d', NULL, NULL);
                 INSERT INTO guided_reports (id, revision, payload)
                     VALUES ('guided', 1, x'7b7d');
                 INSERT INTO guided_report_revisions (report_id, revision, saved_at_unix_ms, payload)
@@ -2400,8 +2416,22 @@ mod tests {
                     VALUES ('observation', 1, x'7b7d');
                 INSERT INTO graph_workspaces (id, revision, payload)
                     VALUES ('graph', 1, x'7b7d');
+                INSERT INTO graph_workspace_items (
+                    workspace_id, item_id, item_kind, x, y, pinned
+                ) VALUES
+                    ('graph', 'graph-source', 'intelligence', 0.0, 0.0, 1),
+                    ('graph', 'graph-target', 'evidence', 100.0, 0.0, 0);
+                INSERT INTO graph_visual_links (
+                    id, workspace_id, source_id, target_id, label
+                ) VALUES ('visual-link', 'graph', 'graph-source', 'graph-target', 'analysis');
                 INSERT INTO brand_profiles (id, revision, payload)
                     VALUES ('brand', 1, x'7b7d');
+                INSERT INTO brand_profile_revisions (
+                    profile_id, revision, saved_at_unix_ms, payload
+                ) VALUES ('brand', 1, 1, x'7b7d');
+                INSERT INTO brand_assets (
+                    id, profile_id, role, media_type, file_name, byte_len, payload
+                ) VALUES ('brand-asset', 'brand', 'logo', 'image/png', 'logo.png', 1, x'00');
                 INSERT INTO evidence_files (
                     id, media_type, file_name, byte_len, sha256, created_at_unix_ms, payload,
                     revision, title, description, source, source_url, tags_json, analyst_notes,
@@ -2438,20 +2468,30 @@ mod tests {
                 .unwrap();
             assert_eq!(exists, 0, "{removed} must be dropped");
         }
-        for preserved in [
-            "documents",
-            "technique_observations",
-            "graph_workspaces",
-            "brand_profiles",
-            "evidence_files",
-            "report_number_sequences",
+        for (preserved, expected_count) in [
+            ("documents", 1),
+            ("document_revisions", 1),
+            ("document_activity", 1),
+            ("document_image_attachments", 1),
+            ("project_metadata", 1),
+            ("stix_objects", 1),
+            ("stix_drafts", 1),
+            ("technique_observations", 1),
+            ("graph_workspaces", 1),
+            ("graph_workspace_items", 2),
+            ("graph_visual_links", 1),
+            ("brand_profiles", 1),
+            ("brand_profile_revisions", 1),
+            ("brand_assets", 1),
+            ("evidence_files", 1),
+            ("report_number_sequences", 1),
         ] {
             let count = connection
                 .query_row(&format!("SELECT count(*) FROM {preserved}"), [], |row| {
                     row.get::<_, u32>(0)
                 })
                 .unwrap();
-            assert_eq!(count, 1, "{preserved} must be preserved");
+            assert_eq!(count, expected_count, "{preserved} must be preserved");
         }
         let publications = connection
             .query_row("SELECT count(*) FROM publication_history", [], |row| {

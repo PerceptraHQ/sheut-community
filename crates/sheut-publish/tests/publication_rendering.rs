@@ -5,7 +5,7 @@ use sheut_core::{
     Revision, TlpMarking,
 };
 use sheut_publish::{
-    PublicationAssets, PublicationBlock, PublicationIr, render_publication,
+    PublicationAssets, PublicationBlock, PublicationIr, PublishErrorCode, render_publication,
     render_publication_with_assets,
 };
 use std::io::Cursor;
@@ -84,6 +84,7 @@ fn document_native_report() -> DocumentEnvelope {
                 {"type": "paragraph", "attrs": {"textAlign": "center"}, "content": [{"type": "text", "text": "Centered assessment"}]},
                 {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Infrastructure"}]},
                 {"type": "heading", "attrs": {"level": 3}, "content": [{"type": "text", "text": "Hosting"}]},
+                {"type": "heading", "attrs": {"level": 2}},
                 {"type": "blockquote", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Quoted source"}]}]},
                 {"type": "callout", "attrs": {"tone": "info"}, "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Analyst callout"}]}]},
                 {"type": "codeBlock", "content": [{"type": "text", "text": "rule suspicious { condition: true }"}]},
@@ -156,6 +157,14 @@ fn document_native_reports_keep_front_matter_heading_levels_and_page_breaks_for_
     assert!(body.blocks().iter().any(
         |block| matches!(block, PublicationBlock::Heading { level: 3, text, .. } if text == "Hosting")
     ));
+    assert_eq!(
+        body.blocks()
+            .iter()
+            .filter(|block| matches!(block, PublicationBlock::Heading { .. }))
+            .count(),
+        3,
+        "blank headings must be omitted from the generated Typst outline",
+    );
     assert!(
         body.blocks()
             .iter()
@@ -316,6 +325,18 @@ fn frozen_graph_snapshots_publish_from_the_saved_attachment_in_the_figures_appen
         section.key() == "appendix_analytical_figures"
             && matches!(section.blocks(), [PublicationBlock::GraphSnapshot { .. }])
     }));
+
+    assert_eq!(
+        render_publication(
+            &publication,
+            &snapshot(&report, PaperSize::A4),
+            Some(&brand()),
+        )
+        .unwrap_err()
+        .code(),
+        PublishErrorCode::InvalidContent,
+        "a missing frozen graph attachment must block publication",
+    );
 
     let mut png = Cursor::new(Vec::new());
     DynamicImage::new_rgb8(64, 36)
