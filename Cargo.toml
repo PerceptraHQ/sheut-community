@@ -30,7 +30,7 @@ typst = "=0.15.1"
 typst-pdf = "=0.15.1"
 rfd = "=0.17.2"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
-fontdue = { version = "=0.9.3", default-features = false, features = ["std"] }
+fontdue = { version = "=0.9.4", default-features = false, features = ["std"] }
 base64 = "=0.22.1"
 rstix = { version = "=0.20.0", default-features = false, features = ["validate"] }
 
